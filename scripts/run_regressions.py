@@ -48,6 +48,7 @@ def run_for_predictand(name):
 
     predictors, response = reg.build_pooled(predictand=predictand)
     predictors = reg.add_orthogonalized_columns(predictors)  # for sets 7-8
+    predictors = reg.add_quadratic_columns(predictors)  # for set 9
     per_run = predictors["run"].to_series().value_counts().to_dict()
     vif = reg.variance_inflation_factors(predictors[reg.PREDICTOR_UNION])
     print(f"\n[{name}] pooled sample: n={predictors.sizes['sample']}  per-run={per_run}")

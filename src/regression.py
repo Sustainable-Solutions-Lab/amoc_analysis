@@ -40,6 +40,18 @@ PREDICTORS = {
     "dT_NS|Tglob,AMOC": {
         "label": "dT_NS⊥(Tglob,AMOC)", "tag": "dT_NSperpTglob.AMOC", "units": "K",
     },
+    # Quadratic response-surface terms (added by add_quadratic_columns); base
+    # predictors are centered on their pooled means first, so a term keeps the
+    # units of its centered factors (e.g. Tglob^2 -> K^2, Tglob*AMOC -> K Sv).
+    "q_Tglob": {"label": "Tglob", "tag": "Tglob", "units": "K"},
+    "q_Tglob2": {"label": "Tglob²", "tag": "Tglob2", "units": "K^2"},
+    "q_AMOC": {"label": "AMOC", "tag": "AMOC", "units": "Sv"},
+    "q_AMOC2": {"label": "AMOC²", "tag": "AMOC2", "units": "Sv^2"},
+    "q_dT_NS": {"label": "dT_NS", "tag": "dT_NS", "units": "K"},
+    "q_dT_NS2": {"label": "dT_NS²", "tag": "dT_NS2", "units": "K^2"},
+    "q_Tglob.AMOC": {"label": "Tglob·AMOC", "tag": "TglobxAMOC", "units": "K Sv"},
+    "q_Tglob.dT_NS": {"label": "Tglob·dT_NS", "tag": "TglobxdT_NS", "units": "K^2"},
+    "q_AMOC.dT_NS": {"label": "AMOC·dT_NS", "tag": "AMOCxdT_NS", "units": "K Sv"},
 }
 
 # Gram-Schmidt residual columns: key -> (target index, [indices to regress out]).
@@ -103,6 +115,14 @@ PREDICTOR_SETS = [
     {
         "number": 8,  # order tas -> AMOC -> NS
         "predictors": ["tas_global_mean", "AMOC|Tglob", "dT_NS|Tglob,AMOC"],
+    },
+    # Full quadratic response surface (centered predictors): 9 terms + intercept.
+    {
+        "number": 9,
+        "predictors": [
+            "q_Tglob", "q_Tglob2", "q_AMOC", "q_AMOC2", "q_dT_NS", "q_dT_NS2",
+            "q_Tglob.AMOC", "q_Tglob.dT_NS", "q_AMOC.dT_NS",
+        ],
     },
 ]
 
@@ -168,6 +188,34 @@ def add_orthogonalized_columns(predictors):
             predictors[target].values, [predictors[g].values for g in given]
         )
         out[key] = ("sample", resid)
+    return out
+
+
+def add_quadratic_columns(predictors):
+    """Augment with the centered quadratic response-surface terms (for set 9).
+
+    Each base predictor is centered on its pooled mean, then squares and pairwise
+    products are formed from the centered values. Centering is essential: with raw
+    values (Tglob ~ 287 K) the linear and squared terms are ~collinear and the
+    design is singular; centering drops cond(XᵀX) from ~1e20 to ~1e5.
+    """
+    c = {
+        "Tglob": predictors["tas_global_mean"].values,
+        "AMOC": predictors["amoc_strength"].values,
+        "dT_NS": predictors["tas_interhemispheric_diff"].values,
+    }
+    c = {k: v - v.mean() for k, v in c.items()}
+
+    out = predictors.copy()
+    out["q_Tglob"] = ("sample", c["Tglob"])
+    out["q_AMOC"] = ("sample", c["AMOC"])
+    out["q_dT_NS"] = ("sample", c["dT_NS"])
+    out["q_Tglob2"] = ("sample", c["Tglob"] ** 2)
+    out["q_AMOC2"] = ("sample", c["AMOC"] ** 2)
+    out["q_dT_NS2"] = ("sample", c["dT_NS"] ** 2)
+    out["q_Tglob.AMOC"] = ("sample", c["Tglob"] * c["AMOC"])
+    out["q_Tglob.dT_NS"] = ("sample", c["Tglob"] * c["dT_NS"])
+    out["q_AMOC.dT_NS"] = ("sample", c["AMOC"] * c["dT_NS"])
     return out
 
 

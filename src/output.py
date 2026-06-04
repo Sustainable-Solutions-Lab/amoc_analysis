@@ -16,6 +16,13 @@ SIGNIFICANCE_P = 0.05
 PROJECTION = ccrs.PlateCarree(central_longitude=0)
 DATA_CRS = ccrs.PlateCarree()
 
+# Axis labels for the scalar predictors (used by the scatter plot).
+SCALAR_AXIS_LABELS = {
+    "tas_global_mean": "global-mean tas (K)",
+    "amoc_strength": "AMOC strength (Sv)",
+    "tas_interhemispheric_diff": "interhemispheric tas diff, NH−SH (K)",
+}
+
 
 def _symmetric_bound(values):
     """Robust symmetric color bound: the 99th percentile of |values| (NaN-safe)."""
@@ -68,11 +75,19 @@ def plot_set(fit, set_def, run_label, out_path, predictand):
     cmap = predictand.get("cmap", "RdBu_r")
     predictors = set_def["predictors"]
     n = len(predictors)
+    # Stack few panels in a single column; lay many (e.g. the 9-term set) on a grid.
+    ncols = 3 if n > 4 else 1
+    nrows = -(-n // ncols)
     fig, axes = plt.subplots(
-        n, 1, figsize=(9, 4.0 * n), squeeze=False,
+        nrows, ncols,
+        figsize=(9 if ncols == 1 else 6.0 * ncols, (4.0 if ncols == 1 else 3.4) * nrows),
+        squeeze=False,
         subplot_kw={"projection": PROJECTION},
     )
-    for ax, name in zip(axes[:, 0], predictors):
+    flat = list(axes.flat)
+    for ax in flat[n:]:
+        ax.set_visible(False)
+    for ax, name in zip(flat, predictors):
         meta = PREDICTORS[name]
         plot_coefficient_map(
             fit["coef"].sel(param=name),
@@ -87,6 +102,46 @@ def plot_set(fit, set_def, run_label, out_path, predictand):
         f"Set {set_def['number']}: {plabel} ~ {preds}  |  {run_label}\n"
         f"stippling: p > {SIGNIFICANCE_P} (nominal OLS; autocorrelation not corrected)",
         fontsize=11,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    fig.savefig(out_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_predictor_scatter(predictors, out_path):
+    """Four-panel scatter of the pooled predictors, points colored by simulation.
+
+    Top row uses global-mean tas on the x-axis (AMOC and ΔT_NS on y); bottom row
+    uses AMOC strength on the x-axis (global-mean tas and ΔT_NS on y). The pooled
+    Pearson r is annotated per panel. ``predictors`` is the pooled Dataset from
+    ``regression.build_pooled`` (variables on ``sample``, with a ``run`` coord).
+    """
+    panels = [
+        ("tas_global_mean", "amoc_strength"),
+        ("tas_global_mean", "tas_interhemispheric_diff"),
+        ("amoc_strength", "tas_global_mean"),
+        ("amoc_strength", "tas_interhemispheric_diff"),
+    ]
+    runs = list(dict.fromkeys(predictors["run"].values))
+    colors = plt.cm.tab10(np.arange(len(runs)))
+    run_of = predictors["run"].values
+
+    fig, axes = plt.subplots(2, 2, figsize=(11, 9))
+    for ax, (xv, yv) in zip(axes.flat, panels):
+        x, y = predictors[xv].values, predictors[yv].values
+        for color, run in zip(colors, runs):
+            m = run_of == run
+            ax.scatter(x[m], y[m], s=12, color=color, alpha=0.7,
+                       edgecolors="none", label=run)
+        r = float(np.corrcoef(x, y)[0, 1])
+        ax.set_xlabel(SCALAR_AXIS_LABELS[xv])
+        ax.set_ylabel(SCALAR_AXIS_LABELS[yv])
+        ax.set_title(f"pooled r = {r:+.2f}", fontsize=10)
+        ax.grid(alpha=0.3)
+    axes.flat[0].legend(fontsize=8, markerscale=1.6, title="simulation")
+    fig.suptitle(
+        "Pooled regression predictors (AMOC-complete sample, 4 simulations)",
+        fontsize=12,
     )
     fig.tight_layout(rect=(0, 0, 1, 0.97))
     fig.savefig(out_path, dpi=300, bbox_inches="tight")
