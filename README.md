@@ -159,9 +159,41 @@ weighting uses exact zonal-band weights, `sin(edge_N) − sin(edge_S)`, which
 handle the FV grid's half-width polar cells. Regressions drop years with any
 missing dependent/predictor value (see `CLAUDE.md`).
 
+## Analysis
+
+### Pooled regressions of gridded `tas` on scalar indices
+
+`scripts/run_regressions.py` regresses gridded annual-mean `tas` (one time
+series per grid cell) on combinations of the scalar indices `tas_global_mean`
+(Tglob), `tas_interhemispheric_diff` (dT_NS), and `amoc_strength` (AMOC), for six
+predictor sets (each index alone, and the multivariate combinations).
+
+The years of all four simulations (historical-ssp585, abrupt-4xCO2, piControl,
+u03-hos) are **pooled into one fit per grid cell** with a single common intercept
+and no per-run fixed effects. Pooling exploits the fact that the runs disagree
+about how the indices co-vary (piControl ~uncorrelated; u03-hos flips the sign of
+dT_NS), which sharply reduces the within-run collinearity that otherwise makes
+the multivariate coefficients unidentifiable. All six sets use one common sample:
+the years where every predictor is present (= AMOC-present years), 500 rows
+(historical-ssp585 200, others 100 each).
+
+Multivariate sets use full multiple OLS, so each map shows a predictor's
+**partial** coefficient (effect holding the others fixed) — preferable to
+sequential residualization, which either biases the estimate or merely
+re-parameterizes the same fit with an arbitrary variance-attribution order.
+Coefficient maps (`src/output.py`) use a diverging colormap with symmetric bounds
+(white = 0) and **stipple cells where p > 0.05**. Outputs (PDF maps + NetCDF
+coefficient fields + a caveats `README.txt`) go to `data/output/regression/`.
+
+Caveats: p-values are nominal OLS (within-run autocorrelation makes them
+optimistic); the three-predictor set retains high collinearity (VIF ≈ 22), so its
+partial coefficients are weakly constrained. Fit correctness is validated against
+`statsmodels` (agreement < 1e-6), and the global mean of the Tglob coefficient is
+exactly 1.0 (a built-in consistency check).
+
 ## Status
 
-Project scaffolding plus preprocessing: gridded annual means
-(`scripts/make_annual_means.py`) and per-simulation scalar time series
-(`scripts/make_scalar_timeseries.py`), built on `src/data_loader.py`.
-Regression and plotting modules to follow.
+Preprocessing (`scripts/make_annual_means.py`,
+`scripts/make_scalar_timeseries.py`) and pooled per-grid-point regression
+analysis (`scripts/run_regressions.py`), built on `src/data_loader.py`,
+`src/regression.py`, and `src/output.py`.
