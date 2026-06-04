@@ -98,6 +98,70 @@ five experiments:
 - ³ `u03-hos` is the freshwater-hosing experiment; its time axis spans
   1850–2022 on a `noleap` calendar.
 
+### Processed annual means (`data/processed/`, git-ignored)
+
+`scripts/make_annual_means.py` precomputes month-length-weighted annual means
+(correct for the `noleap` calendar) of the gridded fields, following CMIP
+variable names: `tas` (K), `pr` (**total** precipitation, kg m⁻² s⁻¹), and
+`prc` (**convective** precipitation, kg m⁻² s⁻¹). The raw CAM files contribute
+`TREFHT` (renamed `tas`) and convective precipitation as `prc` — these distinct
+names keep convective output from being mistaken for total `pr`. Each variable
+carries provenance attributes (`source_file`, `source_variable`,
+`original_units`, `annual_mean_method`, `precip_kind`). Output (8 files):
+
+| File | Coverage |
+| --- | --- |
+| `{tas,pr}_annual_CESM2_historical-ssp585.nc` | 1850–2100 (251 yr, spliced) |
+| `{tas,pr}_annual_CESM2_abrupt-4xCO2.nc` | years 1–999 |
+| `tas_annual_CESM2_piControl.nc`, `prc_annual_CESM2_piControl.nc` | years 700–799 |
+| `tas_annual_CESM2_u03-hos.nc`, `prc_annual_CESM2_u03-hos.nc` | 1850–2021 |
+
+**Two precipitation caveats:**
+
+- **Total vs convective.** Only `historical`, `ssp585`, and `abrupt-4xCO2`
+  provide total precipitation (`pr`). `piControl` and `u03-hos` provide
+  convective precipitation only (`prc`) — a different quantity; do not regress
+  `prc` against `pr` as if they were the same field.
+- **Mislabeled source units.** The raw `prc` source carries `units = "m/s"`,
+  but its values are a water mass flux already in kg m⁻² s⁻¹ (they match the
+  total-`pr` magnitude; true m s⁻¹ precipitation would be ~1000× smaller). The
+  data is used as-is without scaling; outputs record this in a `units_note`
+  attribute.
+
+The combined `historical-ssp585` files treat historical (1850–2014) and
+ssp585 (2015–2100) as one continuous simulation; note the ensemble members
+differ (historical r1i1p1f1, ssp585 r4i1p1f1).
+
+### Scalar time series (`data/processed/`, git-ignored)
+
+`scripts/make_scalar_timeseries.py` writes one `scalars_annual_CESM2_{exp}.nc`
+per simulation, each holding these one-value-per-year series on the simulation's
+gridded year axis:
+
+- `amoc_strength` (Sv) — from `CESM2_AMOC_experiments.nc`
+- `tas_global_mean` (K) — area-weighted global annual-mean temperature
+- `tas_interhemispheric_diff` (K) — area-weighted NH-mean minus SH-mean
+
+| File | year axis | notes |
+| --- | --- | --- |
+| `…historical-ssp585.nc` | 1850–2100 | AMOC spliced (1850–1949, 2001–2100); **1950–2000 missing** |
+| `…abrupt-4xCO2.nc` | 1–999 | AMOC years 1–100; NaN after |
+| `…piControl.nc` | 700–799 | AMOC years 700–799 |
+| `…u03-hos.nc` | 1850–2021 | AMOC years 1850–1949; NaN after |
+| `…hosing-0.1Sv-greenland.nc` | 1–100 | AMOC only — no gridded `tas` for this run |
+
+The AMOC series in `CESM2_AMOC_experiments.nc` are the **first 100 years** of
+each run, placed at the start of that run's year axis (the historical case
+splices its two windows). Temperature scalars are derived from the annual `tas`
+files — area weighting commutes with the month-length-weighted annual mean, so
+this is exact (verified to 0 K against recomputation from monthly data). Area
+weighting uses exact zonal-band weights, `sin(edge_N) − sin(edge_S)`, which
+handle the FV grid's half-width polar cells. Regressions drop years with any
+missing dependent/predictor value (see `CLAUDE.md`).
+
 ## Status
 
-Project scaffolding. Analysis modules to follow.
+Project scaffolding plus preprocessing: gridded annual means
+(`scripts/make_annual_means.py`) and per-simulation scalar time series
+(`scripts/make_scalar_timeseries.py`), built on `src/data_loader.py`.
+Regression and plotting modules to follow.

@@ -113,3 +113,9 @@ rather than hiding them.
 - Report uncertainty on every fitted parameter (standard error or confidence
   interval), not just the point estimate.
 - Be explicit about units and any normalization or anomaly referencing applied.
+- **Missing data in regressions**: If the dependent variable or any predictor
+  has missing data (`NaN`) for some years, drop those years from the fit
+  (listwise / complete-case deletion) rather than imputing or interpolating.
+  For example, the combined historical+ssp585 AMOC series is missing 1950–2000;
+  a regression using it simply omits those years. State in the output how many
+  years were used after dropping incomplete cases.

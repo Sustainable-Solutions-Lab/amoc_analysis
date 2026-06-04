@@ -32,3 +32,6 @@ data/output/
 
 # Input data (large CESM2 NetCDF — read-only reference data, not tracked)
 data/input/
+
+# Derived annual-mean intermediate files (regenerable from data/input/)
+data/processed/

@@ -5,3 +5,4 @@ statsmodels
 matplotlib
 xarray
 netCDF4
+dask
