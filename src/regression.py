@@ -40,11 +40,13 @@ PREDICTANDS = {
     "tas": {
         "label": "tas",
         "units": "K",
+        "cmap": "RdBu_r",  # warm (positive) = red
         "by_run": {r: {"file": f"tas_annual_CESM2_{r}.nc", "var": "tas"} for r in RUNS},
     },
     "precip": {
         "label": "precip",
         "units": "kg m-2 s-1",
+        "cmap": "RdBu",  # wetter (positive) = blue, drier = red (precip convention)
         "by_run": {
             "historical-ssp585": {"file": "pr_annual_CESM2_historical-ssp585.nc", "var": "pr"},
             "abrupt-4xCO2": {"file": "pr_annual_CESM2_abrupt-4xCO2.nc", "var": "pr"},

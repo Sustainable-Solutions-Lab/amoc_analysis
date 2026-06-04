@@ -22,16 +22,17 @@ def _symmetric_bound(values):
     return float(np.nanpercentile(np.abs(values), 99))
 
 
-def plot_coefficient_map(coef, pvalue, title, units, ax):
+def plot_coefficient_map(coef, pvalue, title, units, ax, cmap="RdBu_r"):
     """Draw one coefficient map on a Cartopy ``ax``: filled field + p>0.05 stippling.
 
-    ``coef`` and ``pvalue`` are 2-D (lat, lon) DataArrays. Returns the mappable
-    for colorbar creation by the caller.
+    ``coef`` and ``pvalue`` are 2-D (lat, lon) DataArrays. ``cmap`` is a diverging
+    colormap (white = 0); use ``RdBu_r`` for temperature (warm = red) and ``RdBu``
+    for precipitation (wet = blue). Returns the mappable for colorbar creation.
     """
     lon, lat = coef["lon"], coef["lat"]
     bound = _symmetric_bound(coef.values)
     mesh = ax.pcolormesh(
-        lon, lat, coef, cmap="RdBu_r", vmin=-bound, vmax=bound,
+        lon, lat, coef, cmap=cmap, vmin=-bound, vmax=bound,
         shading="auto", transform=DATA_CRS,
     )
     # Stipple where NOT significant (p > 0.05).
@@ -64,6 +65,7 @@ def plot_set(fit, set_def, run_label, out_path, predictand):
     from regression import PREDICTORS  # local import to avoid a cycle at import time
 
     plabel, punits = predictand["label"], predictand["units"]
+    cmap = predictand.get("cmap", "RdBu_r")
     predictors = set_def["predictors"]
     n = len(predictors)
     fig, axes = plt.subplots(
@@ -78,6 +80,7 @@ def plot_set(fit, set_def, run_label, out_path, predictand):
             title=f"∂{plabel}/∂{meta['label']}  ({meta['label']} coefficient)",
             units=f"({punits}) / {meta['units']}",
             ax=ax,
+            cmap=cmap,
         )
     preds = ", ".join(PREDICTORS[p]["label"] for p in predictors)
     fig.suptitle(
