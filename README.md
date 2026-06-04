@@ -15,6 +15,9 @@ Circulation (AMOC) and its relationships to other climate variables.
 
 ## Setup
 
+Developed with **Python 3.10**. Dependency versions in `requirements.txt` are
+unpinned; the analysis is deterministic (no random components).
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate
@@ -24,10 +27,13 @@ pip install -r requirements.txt
 Key dependencies:
 
 - **numpy**, **pandas** — numerical arrays and tabular data
-- **xarray**, **netCDF4** — reading CESM2 NetCDF output
+- **xarray**, **netCDF4**, **dask** — reading CESM2 NetCDF output; `dask`
+  streams the ~2.5 GB monthly files so annual means are computed out-of-core
 - **scipy**, **statsmodels** — linear regression and statistics
-  (`statsmodels` for OLS with full inference; `scipy.stats` for quick fits)
-- **matplotlib** — figures
+  (closed-form vectorized OLS for the per-grid-cell maps; `statsmodels`
+  validates it and is available for single fits)
+- **matplotlib**, **cartopy** — figures and coastline maps (Cartopy downloads
+  Natural Earth coastline data on first use, which needs network access)
 
 ## Repository layout
 
@@ -47,7 +53,27 @@ amoc_analysis/
 
 CESM2 output is placed in `./data/input/` (NetCDF). This directory is treated as
 read-only reference data — see `CLAUDE.md`. The gridded fields are too large to
-commit to git and are not tracked in this repository.
+commit to git and are not tracked in this repository, so **a colleague must
+obtain these input files separately** and place them in `data/input/` with these
+exact names (the filenames are hard-coded in `src/data_loader.py`):
+
+```
+CESM2_AMOC_experiments.nc
+tas_Amon_CESM2_historical_r1i1p1f1_gn_18500115-20141215.nc
+tas_Amon_CESM2_ssp585_r1i1p1f1_gn_20150115-21001215.nc
+tas_Amon_CESM2_abrupt-4xCO2-002.nc
+tas_Amon_CESM2_piControl_070001-079912.nc
+tas_Amon_CESM2_u03-hos_1850001-202112.nc
+pr_Amon_CESM2_historical_r1i1p1f1_gn_18500115-20141215.nc
+pr_Amon_CESM2_ssp585_r1i1p1f1_gn_20150115-21001215.nc
+pr_Amon_CESM2_abrupt-4xCO2-001.nc
+pr_Amon_CESM2_piControl_070001-079912.nc
+pr_Amon_CESM2_u03-hos_1850001-202112.nc
+```
+
+> **TODO (data source):** record where these files come from (archive/DOI/URL or
+> internal path) so the inputs themselves are reproducible — this is the one
+> prerequisite not contained in the repository.
 
 ### AMOC strength time series
 
@@ -161,39 +187,79 @@ missing dependent/predictor value (see `CLAUDE.md`).
 
 ## Analysis
 
-### Pooled regressions of gridded `tas` on scalar indices
+### Pooled per-grid-point regressions
 
-`scripts/run_regressions.py` regresses gridded annual-mean `tas` (one time
-series per grid cell) on combinations of the scalar indices `tas_global_mean`
-(Tglob), `tas_interhemispheric_diff` (dT_NS), and `amoc_strength` (AMOC), for six
-predictor sets (each index alone, and the multivariate combinations).
+`scripts/run_regressions.py` regresses a gridded annual-mean **predictand** (one
+time series per grid cell) on the scalar indices `tas_global_mean` (Tglob),
+`tas_interhemispheric_diff` (dT_NS), and `amoc_strength` (AMOC). It runs for two
+predictands: **`tas`** (temperature, K) and **`precip`** (the pooled-prototype
+field — total `pr` for historical-ssp585/abrupt-4xCO2, convective `prc` for
+piControl/u03-hos; see precip caveats above).
 
 The years of all four simulations (historical-ssp585, abrupt-4xCO2, piControl,
-u03-hos) are **pooled into one fit per grid cell** with a single common intercept
-and no per-run fixed effects. Pooling exploits the fact that the runs disagree
-about how the indices co-vary (piControl ~uncorrelated; u03-hos flips the sign of
-dT_NS), which sharply reduces the within-run collinearity that otherwise makes
-the multivariate coefficients unidentifiable. All six sets use one common sample:
-the years where every predictor is present (= AMOC-present years), 500 rows
-(historical-ssp585 200, others 100 each).
+u03-hos; greenland-hosing is excluded — no gridded field) are **pooled into one
+fit per grid cell** with a single common intercept and no per-run fixed effects.
+Pooling exploits the runs' disagreement about how the indices co-vary (piControl
+~uncorrelated; u03-hos flips the sign of dT_NS), sharply reducing the within-run
+collinearity. All sets use one common sample: the years where every predictor is
+present (= AMOC-present years), **500 rows** (historical-ssp585 200, others 100).
 
-Multivariate sets use full multiple OLS, so each map shows a predictor's
-**partial** coefficient (effect holding the others fixed) — preferable to
-sequential residualization, which either biases the estimate or merely
-re-parameterizes the same fit with an arbitrary variance-attribution order.
+Nine predictor sets are produced (one multi-panel coefficient map per set, per
+predictand):
+
+| Set | Predictors |
+| --- | --- |
+| 1–3 | each index alone: Tglob; dT_NS; AMOC |
+| 4–6 | combinations: Tglob+dT_NS; Tglob+AMOC; Tglob+dT_NS+AMOC |
+| 7 | orthogonalized, order tas→NS→AMOC: `Tglob`, `dT_NS⊥Tglob`, `AMOC⊥(Tglob,dT_NS)` |
+| 8 | orthogonalized, order tas→AMOC→NS: `Tglob`, `AMOC⊥Tglob`, `dT_NS⊥(Tglob,AMOC)` |
+| 9 | full quadratic (centered): Tglob, Tglob², AMOC, AMOC², dT_NS, dT_NS², Tglob·AMOC, Tglob·dT_NS, AMOC·dT_NS |
+
+- **Sets 4–6** use full multiple OLS → each map is that predictor's **partial**
+  coefficient (effect holding the others fixed).
+- **Sets 7–8** are Gram–Schmidt orthogonalizations (`add_orthogonalized_columns`):
+  each residual column is the index with the earlier ones regressed out, so the
+  columns are mutually orthogonal (VIF = 1) and give a hierarchical decomposition
+  whose attribution depends on the chosen order (compare 7 vs 8).
+- **Set 9** is the full quadratic response surface (`add_quadratic_columns`); the
+  three base indices are **centered on their pooled means** before squares and
+  products are formed (essential for conditioning: cond(XᵀX) drops from ~1e20 to
+  ~1e5). Its 9 term coefficients are mapped on a 3×3 grid.
+
 Coefficient maps (`src/output.py`) use a diverging colormap with symmetric bounds
-(white = 0) and **stipple cells where p > 0.05**. Outputs (PDF maps + NetCDF
-coefficient fields + a caveats `README.txt`) go to `data/output/regression/`.
+(white = 0; `RdBu_r` for tas with warm = red, `RdBu` for precip with wet = blue)
+and **stipple cells where p > 0.05**. Each set writes a PDF and a NetCDF of the
+coefficient/SE/t/p/R² fields to `data/output/regression/<predictand>/`, plus a
+caveats `README.txt`. `scripts/plot_predictor_scatter.py` writes
+`data/output/regression/predictor_scatter.pdf`, a 4-panel scatter of the pooled
+predictors colored by simulation.
 
-Caveats: p-values are nominal OLS (within-run autocorrelation makes them
-optimistic); the three-predictor set retains high collinearity (VIF ≈ 22), so its
-partial coefficients are weakly constrained. Fit correctness is validated against
-`statsmodels` (agreement < 1e-6), and the global mean of the Tglob coefficient is
-exactly 1.0 (a built-in consistency check).
+Caveats: p-values are **nominal OLS** (within-run autocorrelation makes them
+optimistic — an effective-degrees-of-freedom correction is planned but not yet
+applied); the 3-index set retains high collinearity (VIF ≈ 22) and the quadratic
+set even after centering (max VIF ≈ 1500), so those coefficients are weakly
+constrained. Fits are validated against `statsmodels` (agreement < 1e-6), and the
+global mean of the `tas`-on-Tglob coefficient is exactly 1.0 (a consistency check).
+
+## Reproducing the results
+
+After placing the input files in `data/input/` (see [Data](#data)) and installing
+dependencies, run, in order:
+
+```bash
+python scripts/make_annual_means.py        # data/processed/{tas,pr,prc}_annual_*.nc
+python scripts/make_scalar_timeseries.py   # data/processed/scalars_annual_*.nc
+python scripts/run_regressions.py          # data/output/regression/{tas,precip}/coef_set*.{pdf,nc}
+python scripts/plot_predictor_scatter.py   # data/output/regression/predictor_scatter.pdf
+```
+
+Each script is a thin wrapper over `src/` and prints what it writes. All outputs
+land under `data/` (git-ignored) and are fully regenerable from the inputs.
 
 ## Status
 
 Preprocessing (`scripts/make_annual_means.py`,
-`scripts/make_scalar_timeseries.py`) and pooled per-grid-point regression
-analysis (`scripts/run_regressions.py`), built on `src/data_loader.py`,
+`scripts/make_scalar_timeseries.py`), pooled per-grid-point regression analysis
+(`scripts/run_regressions.py`, sets 1–9 for tas and precip), and predictor
+scatter (`scripts/plot_predictor_scatter.py`), built on `src/data_loader.py`,
 `src/regression.py`, and `src/output.py`.
