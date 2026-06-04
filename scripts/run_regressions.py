@@ -47,8 +47,9 @@ def run_for_predictand(name):
     os.makedirs(out_dir, exist_ok=True)
 
     predictors, response = reg.build_pooled(predictand=predictand)
+    predictors = reg.add_orthogonalized_columns(predictors)  # for sets 7-8
     per_run = predictors["run"].to_series().value_counts().to_dict()
-    vif = reg.variance_inflation_factors(predictors)
+    vif = reg.variance_inflation_factors(predictors[reg.PREDICTOR_UNION])
     print(f"\n[{name}] pooled sample: n={predictors.sizes['sample']}  per-run={per_run}")
     print(f"[{name}] VIF (3-predictor union):", {k: round(v, 2) for k, v in vif.items()})
 
@@ -57,7 +58,7 @@ def run_for_predictand(name):
         names = set_def["predictors"]
         fit = reg.fit_grid_ols(predictors[names], response)
 
-        labels = "-".join(reg.PREDICTORS[p]["label"] for p in names)
+        labels = "-".join(reg.PREDICTORS[p]["tag"] for p in names)
         pdf = os.path.join(out_dir, f"coef_set{set_def['number']}_{labels}.pdf")
         nc = os.path.join(out_dir, f"coef_set{set_def['number']}_{labels}.nc")
         plot_set(fit, set_def, run_label, pdf, predictand)

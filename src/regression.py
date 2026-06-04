@@ -27,9 +27,33 @@ RUNS = ["historical-ssp585", "abrupt-4xCO2", "piControl", "u03-hos"]
 # Scalar predictors: variable name -> (short label, the predictor's own units).
 # A regression coefficient then has units [predictand units] / [predictor units].
 PREDICTORS = {
-    "tas_global_mean": {"label": "Tglob", "units": "K"},
-    "tas_interhemispheric_diff": {"label": "dT_NS", "units": "K"},
-    "amoc_strength": {"label": "AMOC", "units": "Sv"},
+    "tas_global_mean": {"label": "Tglob", "tag": "Tglob", "units": "K"},
+    "tas_interhemispheric_diff": {"label": "dT_NS", "tag": "dT_NS", "units": "K"},
+    "amoc_strength": {"label": "AMOC", "tag": "AMOC", "units": "Sv"},
+    # Gram-Schmidt residual columns (added by add_orthogonalized_columns); a
+    # residual keeps its parent index's units. Used by the orthogonalized sets.
+    "dT_NS|Tglob": {"label": "dT_NS⊥Tglob", "tag": "dT_NSperpTglob", "units": "K"},
+    "AMOC|Tglob,dT_NS": {
+        "label": "AMOC⊥(Tglob,dT_NS)", "tag": "AMOCperpTglob.dT_NS", "units": "Sv",
+    },
+    "AMOC|Tglob": {"label": "AMOC⊥Tglob", "tag": "AMOCperpTglob", "units": "Sv"},
+    "dT_NS|Tglob,AMOC": {
+        "label": "dT_NS⊥(Tglob,AMOC)", "tag": "dT_NSperpTglob.AMOC", "units": "K",
+    },
+}
+
+# Gram-Schmidt residual columns: key -> (target index, [indices to regress out]).
+ORTHOGONAL_COLUMNS = {
+    "dT_NS|Tglob": ("tas_interhemispheric_diff", ["tas_global_mean"]),
+    "AMOC|Tglob,dT_NS": (
+        "amoc_strength",
+        ["tas_global_mean", "tas_interhemispheric_diff"],
+    ),
+    "AMOC|Tglob": ("amoc_strength", ["tas_global_mean"]),
+    "dT_NS|Tglob,AMOC": (
+        "tas_interhemispheric_diff",
+        ["tas_global_mean", "amoc_strength"],
+    ),
 }
 
 # Gridded predictands (response fields). Each maps every run to the processed
@@ -70,6 +94,15 @@ PREDICTOR_SETS = [
             "tas_interhemispheric_diff",
             "amoc_strength",
         ],
+    },
+    # Orthogonalized (Gram-Schmidt) sets: mutually orthogonal columns (VIF=1).
+    {
+        "number": 7,  # order tas -> NS -> AMOC
+        "predictors": ["tas_global_mean", "dT_NS|Tglob", "AMOC|Tglob,dT_NS"],
+    },
+    {
+        "number": 8,  # order tas -> AMOC -> NS
+        "predictors": ["tas_global_mean", "AMOC|Tglob", "dT_NS|Tglob,AMOC"],
     },
 ]
 
@@ -112,6 +145,30 @@ def build_pooled(runs=RUNS, predictor_union=PREDICTOR_UNION, predictand=None):
     predictors = xr.concat(pred_parts, dim="year").rename(year="sample")
     response = xr.concat(resp_parts, dim="year").rename(year="sample")
     return predictors, response
+
+
+def _residual(y, given):
+    """Residual of 1-D ``y`` after OLS on ``given`` (list of 1-D arrays) + intercept."""
+    X = np.column_stack([np.ones(y.size)] + list(given))
+    beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+    return y - X @ beta
+
+
+def add_orthogonalized_columns(predictors):
+    """Augment a pooled predictor Dataset with Gram-Schmidt residual columns.
+
+    Each entry of ``ORTHOGONAL_COLUMNS`` is added as a new variable: the target
+    index with the listed indices regressed out (on the pooled ``sample`` axis).
+    The result is orthogonal to those indices, so an orthogonalized set has
+    mutually uncorrelated columns (VIF = 1).
+    """
+    out = predictors.copy()
+    for key, (target, given) in ORTHOGONAL_COLUMNS.items():
+        resid = _residual(
+            predictors[target].values, [predictors[g].values for g in given]
+        )
+        out[key] = ("sample", resid)
+    return out
 
 
 def fit_grid_ols(predictors, tas):
