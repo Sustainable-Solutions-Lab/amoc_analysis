@@ -24,11 +24,34 @@ import data_loader as dl
 
 RUNS = ["historical-ssp585", "abrupt-4xCO2", "piControl", "u03-hos"]
 
-# Scalar predictors: variable name -> (short label, coefficient units for tas response).
+# Scalar predictors: variable name -> (short label, the predictor's own units).
+# A regression coefficient then has units [predictand units] / [predictor units].
 PREDICTORS = {
-    "tas_global_mean": {"label": "Tglob", "coef_units": "K/K"},
-    "tas_interhemispheric_diff": {"label": "dT_NS", "coef_units": "K/K"},
-    "amoc_strength": {"label": "AMOC", "coef_units": "K/Sv"},
+    "tas_global_mean": {"label": "Tglob", "units": "K"},
+    "tas_interhemispheric_diff": {"label": "dT_NS", "units": "K"},
+    "amoc_strength": {"label": "AMOC", "units": "Sv"},
+}
+
+# Gridded predictands (response fields). Each maps every run to the processed
+# file and variable that supplies the field for that run. Precipitation mixes
+# total `pr` (historical-ssp585, abrupt-4xCO2) with convective `prc` (piControl,
+# u03-hos) — physically different quantities, pooled here only to prototype.
+PREDICTANDS = {
+    "tas": {
+        "label": "tas",
+        "units": "K",
+        "by_run": {r: {"file": f"tas_annual_CESM2_{r}.nc", "var": "tas"} for r in RUNS},
+    },
+    "precip": {
+        "label": "precip",
+        "units": "kg m-2 s-1",
+        "by_run": {
+            "historical-ssp585": {"file": "pr_annual_CESM2_historical-ssp585.nc", "var": "pr"},
+            "abrupt-4xCO2": {"file": "pr_annual_CESM2_abrupt-4xCO2.nc", "var": "pr"},
+            "piControl": {"file": "prc_annual_CESM2_piControl.nc", "var": "prc"},
+            "u03-hos": {"file": "prc_annual_CESM2_u03-hos.nc", "var": "prc"},
+        },
+    },
 }
 
 # Predictor sets requested for analysis (column subsets of the predictor union).
@@ -52,36 +75,41 @@ PREDICTOR_SETS = [
 PREDICTOR_UNION = ["tas_global_mean", "tas_interhemispheric_diff", "amoc_strength"]
 
 
-def build_pooled(runs=RUNS, predictor_union=PREDICTOR_UNION):
-    """Pool gridded ``tas`` and scalar predictors across runs onto one sample axis.
+def build_pooled(runs=RUNS, predictor_union=PREDICTOR_UNION, predictand=None):
+    """Pool a gridded predictand and scalar predictors across runs onto one axis.
 
     For each run, keep only the years for which every predictor in
     ``predictor_union`` is present (intersection of non-NaN), then concatenate
-    runs along a new ``sample`` dimension. Returns ``(predictors, tas)`` where
-    ``predictors`` is an xarray Dataset of the scalar variables on ``sample`` and
-    ``tas`` is the response with dims ``(sample, lat, lon)``. A ``run`` coordinate
-    labels each sample's source simulation.
+    runs along a new ``sample`` dimension. ``predictand`` is an entry of
+    ``PREDICTANDS`` (defaults to ``tas``) giving the per-run response file/var.
+    Returns ``(predictors, response)`` where ``predictors`` is a Dataset of the
+    scalar variables on ``sample`` and ``response`` has dims ``(sample, lat,
+    lon)``. A ``run`` coordinate labels each sample's source simulation.
     """
-    pred_parts, tas_parts = [], []
+    if predictand is None:
+        predictand = PREDICTANDS["tas"]
+
+    pred_parts, resp_parts = [], []
     for run in runs:
         scal = xr.open_dataset(
             os.path.join(dl.PROCESSED_DIR, f"scalars_annual_CESM2_{run}.nc")
         )[predictor_union]
-        tas = xr.open_dataset(
-            os.path.join(dl.PROCESSED_DIR, f"tas_annual_CESM2_{run}.nc")
-        )["tas"]
+        spec = predictand["by_run"][run]
+        resp = xr.open_dataset(os.path.join(dl.PROCESSED_DIR, spec["file"]))[
+            spec["var"]
+        ].rename(predictand["label"])
 
         valid = scal.to_dataframe().dropna().index  # years with all predictors
         scal = scal.sel(year=valid)
-        tas = tas.sel(year=valid)
+        resp = resp.sel(year=valid)
 
         run_label = xr.DataArray(np.full(valid.size, run), dims="year")
         pred_parts.append(scal.assign_coords(run=("year", run_label.data)))
-        tas_parts.append(tas.assign_coords(run=("year", run_label.data)))
+        resp_parts.append(resp.assign_coords(run=("year", run_label.data)))
 
     predictors = xr.concat(pred_parts, dim="year").rename(year="sample")
-    tas = xr.concat(tas_parts, dim="year").rename(year="sample")
-    return predictors, tas
+    response = xr.concat(resp_parts, dim="year").rename(year="sample")
+    return predictors, response
 
 
 def fit_grid_ols(predictors, tas):

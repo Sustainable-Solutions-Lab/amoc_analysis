@@ -54,13 +54,16 @@ def plot_coefficient_map(coef, pvalue, title, units, ax):
     return mesh
 
 
-def plot_set(fit, set_def, run_label, out_path):
+def plot_set(fit, set_def, run_label, out_path, predictand):
     """Render all predictor coefficient maps for one regression set to ``out_path``.
 
     One panel per predictor (the intercept is omitted). Stippling marks p > 0.05.
+    ``predictand`` is a ``regression.PREDICTANDS`` entry (label + units), used for
+    titles and to form coefficient units ([predictand units] / [predictor units]).
     """
     from regression import PREDICTORS  # local import to avoid a cycle at import time
 
+    plabel, punits = predictand["label"], predictand["units"]
     predictors = set_def["predictors"]
     n = len(predictors)
     fig, axes = plt.subplots(
@@ -72,13 +75,13 @@ def plot_set(fit, set_def, run_label, out_path):
         plot_coefficient_map(
             fit["coef"].sel(param=name),
             fit["pvalue"].sel(param=name),
-            title=f"∂tas/∂{meta['label']}  ({meta['label']} coefficient)",
-            units=meta["coef_units"],
+            title=f"∂{plabel}/∂{meta['label']}  ({meta['label']} coefficient)",
+            units=f"({punits}) / {meta['units']}",
             ax=ax,
         )
     preds = ", ".join(PREDICTORS[p]["label"] for p in predictors)
     fig.suptitle(
-        f"Set {set_def['number']}: tas ~ {preds}  |  {run_label}\n"
+        f"Set {set_def['number']}: {plabel} ~ {preds}  |  {run_label}\n"
         f"stippling: p > {SIGNIFICANCE_P} (nominal OLS; autocorrelation not corrected)",
         fontsize=11,
     )

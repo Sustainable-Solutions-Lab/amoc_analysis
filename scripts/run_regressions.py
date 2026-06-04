@@ -17,9 +17,12 @@ import data_loader as dl
 import regression as reg
 from output import plot_set
 
-OUT_DIR = os.path.join(dl._REPO_ROOT, "data", "output", "regression")
+OUT_BASE = os.path.join(dl._REPO_ROOT, "data", "output", "regression")
 
-CAVEATS = """Regression outputs: pooled per-grid-point OLS of gridded annual-mean tas.
+# Predictands to analyze (each writes to its own subdirectory).
+PREDICTAND_NAMES = ["tas", "precip"]
+
+CAVEATS = """Regression outputs: pooled per-grid-point OLS of a gridded predictand.
 
 - One regression per grid cell; the years of all four simulations
   (historical-ssp585, abrupt-4xCO2, piControl, u03-hos) are POOLED into a single
@@ -31,43 +34,47 @@ CAVEATS = """Regression outputs: pooled per-grid-point OLS of gridded annual-mea
   annual data makes them OPTIMISTIC; treat significance as indicative.
 - Set 6 (three predictors) retains high collinearity (VIF ~ 22); its partial
   coefficients are poorly constrained. See per-set VIF printed at build time.
-- Coefficient units: tas on Tglob and dT_NS are K/K; tas on AMOC is K/Sv.
+- Coefficient units are [predictand units] / [predictor units] (predictor units:
+  Tglob, dT_NS in K; AMOC in Sv).
+- The 'precip' predictand POOLS total pr (historical-ssp585, abrupt-4xCO2) with
+  CONVECTIVE prc (piControl, u03-hos) -- different quantities, prototype only.
 """
 
 
-def main():
-    os.makedirs(OUT_DIR, exist_ok=True)
+def run_for_predictand(name):
+    predictand = reg.PREDICTANDS[name]
+    out_dir = os.path.join(OUT_BASE, name)
+    os.makedirs(out_dir, exist_ok=True)
 
-    predictors, tas = reg.build_pooled()
+    predictors, response = reg.build_pooled(predictand=predictand)
     per_run = predictors["run"].to_series().value_counts().to_dict()
-    print(f"pooled sample: n={predictors.sizes['sample']}  per-run={per_run}")
     vif = reg.variance_inflation_factors(predictors)
-    print("VIF (3-predictor union):", {k: round(v, 2) for k, v in vif.items()})
+    print(f"\n[{name}] pooled sample: n={predictors.sizes['sample']}  per-run={per_run}")
+    print(f"[{name}] VIF (3-predictor union):", {k: round(v, 2) for k, v in vif.items()})
 
-    run_label = "pooled: " + ", ".join(reg.RUNS)
+    run_label = f"predictand={name}; pooled: " + ", ".join(reg.RUNS)
     for set_def in reg.PREDICTOR_SETS:
         names = set_def["predictors"]
-        fit = reg.fit_grid_ols(predictors[names], tas)
+        fit = reg.fit_grid_ols(predictors[names], response)
 
         labels = "-".join(reg.PREDICTORS[p]["label"] for p in names)
-        pdf = os.path.join(OUT_DIR, f"coef_set{set_def['number']}_{labels}.pdf")
-        nc = os.path.join(OUT_DIR, f"coef_set{set_def['number']}_{labels}.nc")
-        plot_set(fit, set_def, run_label, pdf)
+        pdf = os.path.join(out_dir, f"coef_set{set_def['number']}_{labels}.pdf")
+        nc = os.path.join(out_dir, f"coef_set{set_def['number']}_{labels}.nc")
+        plot_set(fit, set_def, run_label, pdf, predictand)
         fit.to_netcdf(nc)
-
-        gmean_tglob = (
-            float(dl.global_mean(fit["coef"].sel(param="tas_global_mean")))
-            if "tas_global_mean" in names
-            else float("nan")
-        )
         print(
-            f"set {set_def['number']} ({labels}): nobs={fit.attrs['nobs']} "
-            f"-> {os.path.basename(pdf)}; global-mean Tglob coef={gmean_tglob:.3f}"
+            f"[{name}] set {set_def['number']} ({labels}): nobs={fit.attrs['nobs']} "
+            f"-> {os.path.relpath(pdf, OUT_BASE)}"
         )
 
-    with open(os.path.join(OUT_DIR, "README.txt"), "w") as f:
+    with open(os.path.join(out_dir, "README.txt"), "w") as f:
         f.write(CAVEATS)
-    print(f"\nDone. Outputs in {OUT_DIR}")
+
+
+def main():
+    for name in PREDICTAND_NAMES:
+        run_for_predictand(name)
+    print(f"\nDone. Outputs in {OUT_BASE}/<predictand>/")
 
 
 if __name__ == "__main__":
