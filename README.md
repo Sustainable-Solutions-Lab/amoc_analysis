@@ -241,6 +241,52 @@ set even after centering (max VIF ≈ 1500), so those coefficients are weakly
 constrained. Fits are validated against `statsmodels` (agreement < 1e-6), and the
 global mean of the `tas`-on-Tglob coefficient is exactly 1.0 (a consistency check).
 
+### EOF / principal-component regression (additive path)
+
+`scripts/run_eof_regressions.py` is an **additive alternative** to the direct
+per-grid-point maps: it does not replace `run_regressions.py`, it complements it.
+Instead of fitting every grid cell independently, it decomposes each gridded
+field into a few empirical orthogonal functions (EOFs), regresses the leading
+principal-component (PC) time series on the same predictor sets, and maps the
+coefficients back to space as a "fingerprint" Σₖ βₖ·EOFₖ.
+
+Method (`src/eof.py`):
+
+- **Anomalies** are taken about each cell's **grand temporal mean over all 500
+  pooled samples** (not per-run means) — this retains the between-run forced
+  variability the predictors are meant to explain.
+- **Area-weighted covariance EOF:** anomalies are multiplied by √(zonal-band area
+  weight) before an economy SVD and the patterns divided by it afterward, so the
+  EOFs are in physical units. No per-cell standard-deviation normalization.
+- **Truncation:** the leading modes are retained to cumulative **≥ 95 %** of
+  variance (the count is reported per field). The two fields behave very
+  differently: `tas` is highly low-rank — **2 modes ≈ 96.8 %** (EOF1 a global
+  warming pattern, EOF2 an AMOC/interhemispheric dipole) — so the EOF regression
+  is a strong denoising. `precip` is **not** low-rank: it needs **237 modes** to
+  reach 95 % (EOF1 only ≈ 29 %), so at this threshold its fingerprint maps are
+  essentially the full-rank/direct result with little denoising benefit. Only the
+  leading 9 EOF patterns are mapped in `eof_patterns.pdf` (the regression uses all
+  retained modes); to get genuine precip denoising, lower its threshold or fix a
+  small mode count.
+- **PC regression:** the retained PCs are regressed on the same predictor sets
+  1–9 (including the orthogonalized and quadratic columns) with an intercept.
+- **Fingerprint variance is propagated exactly:** the retained PCs are orthogonal
+  but their regression *residuals* are not, so the coefficient-field variance uses
+  the full cross-mode residual covariance, Var = (XᵀX)⁻¹ⱼⱼ · e(x)ᵀ Σ_resid e(x).
+
+**Key identity (verification):** with *all* modes retained, the reconstructed
+fingerprint reproduces the direct field regression's coefficient **and** p-value
+exactly (Δcoef ~ 1e-10, Δp ~ 1e-8). Truncating to ≥ 95 % variance is therefore a
+controlled denoising of the direct maps.
+
+For each predictand (`tas`, `precip`) the script writes to
+`data/output/eof/<predictand>/`: `eof_patterns.pdf` (the retained EOF maps + a
+variance scree bar), `pc_timeseries.pdf` (the PC weightings vs year, one panel
+per simulation, with line breaks across year gaps such as the 1950–2000 AMOC
+gap), `fingerprint_set{N}_*.pdf` (the EOF-filtered coefficient maps, same panel
+layout and wet=blue / warm=red conventions as the direct maps, stippled p>0.05),
+`pc_regression_set{N}_*.nc` (the PC-space coef/SE/t/p), and a caveats `README.txt`.
+
 ## Reproducing the results
 
 After placing the input files in `data/input/` (see [Data](#data)) and installing
@@ -251,6 +297,7 @@ python scripts/make_annual_means.py        # data/processed/{tas,pr,prc}_annual_
 python scripts/make_scalar_timeseries.py   # data/processed/scalars_annual_*.nc
 python scripts/run_regressions.py          # data/output/regression/{tas,precip}/coef_set*.{pdf,nc}
 python scripts/plot_predictor_scatter.py   # data/output/regression/predictor_scatter.pdf
+python scripts/run_eof_regressions.py      # data/output/eof/{tas,precip}/{eof_patterns,pc_timeseries,fingerprint_set*}.pdf
 ```
 
 Each script is a thin wrapper over `src/` and prints what it writes. All outputs
@@ -260,6 +307,7 @@ land under `data/` (git-ignored) and are fully regenerable from the inputs.
 
 Preprocessing (`scripts/make_annual_means.py`,
 `scripts/make_scalar_timeseries.py`), pooled per-grid-point regression analysis
-(`scripts/run_regressions.py`, sets 1–9 for tas and precip), and predictor
-scatter (`scripts/plot_predictor_scatter.py`), built on `src/data_loader.py`,
-`src/regression.py`, and `src/output.py`.
+(`scripts/run_regressions.py`, sets 1–9 for tas and precip), predictor scatter
+(`scripts/plot_predictor_scatter.py`), and the additive EOF / principal-component
+regression path (`scripts/run_eof_regressions.py`, built on `src/eof.py`), all
+built on `src/data_loader.py`, `src/regression.py`, and `src/output.py`.

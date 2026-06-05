@@ -108,6 +108,85 @@ def plot_set(fit, set_def, run_label, out_path, predictand):
     plt.close(fig)
 
 
+def plot_eof_patterns(eof_ds, title, units, out_path, cmap="RdBu_r", max_patterns=9):
+    """Map the leading EOF spatial patterns plus a scree panel of variance explained.
+
+    ``eof_ds`` is the Dataset from ``eof.compute_eofs``. Patterns use a symmetric
+    diverging colormap. Only the leading ``max_patterns`` modes are mapped (fields
+    such as precipitation are not low-rank and can retain hundreds of modes at the
+    95% threshold — mapping them all is unreadable and the regression uses every
+    retained mode regardless). The final panel is a scree: a per-mode bar when the
+    modes are few, otherwise a cumulative-variance curve marking the retained count.
+    """
+    eofs = eof_ds["eofs"]
+    n = eofs.sizes["mode"]
+    var = eof_ds["variance_fraction"].values
+    n_plot = min(n, max_patterns)
+    ncols = 2
+    nrows = -(-(n_plot + 1) // ncols)  # +1 for the scree panel
+    fig = plt.figure(figsize=(6.0 * ncols, 3.4 * nrows))
+    for i in range(n_plot):
+        ax = fig.add_subplot(nrows, ncols, i + 1, projection=PROJECTION)
+        e = eofs.isel(mode=i)
+        bound = _symmetric_bound(e.values)
+        mesh = ax.pcolormesh(e["lon"], e["lat"], e, cmap=cmap, vmin=-bound,
+                             vmax=bound, shading="auto", transform=DATA_CRS)
+        ax.coastlines(linewidth=0.5)
+        ax.set_global()
+        ax.set_title(f"EOF {i + 1}  ({var[i] * 100:.1f}% var)", fontsize=10)
+        cbar = fig.colorbar(mesh, ax=ax, shrink=0.7, pad=0.02)
+        cbar.set_label(units)
+    ax = fig.add_subplot(nrows, ncols, n_plot + 1)
+    if n <= 20:
+        ax.bar(np.arange(1, n + 1), var * 100)
+        ax.set_ylabel("variance explained (%)")
+    else:
+        ax.plot(np.arange(1, n + 1), np.cumsum(var) * 100, lw=1.2)
+        ax.set_ylabel("cumulative variance (%)")
+    ax.set_xlabel("EOF mode")
+    ax.set_title(f"scree: {n} modes retained (Σ = {var.sum() * 100:.1f}%); "
+                 f"mapped leading {n_plot}", fontsize=9)
+    fig.suptitle(title, fontsize=12)
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    fig.savefig(out_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_pc_timeseries(eof_ds, title, out_path, max_modes=4):
+    """Time series of the EOF weightings (PCs) vs year, one panel per simulation.
+
+    Each panel plots the leading ``max_modes`` principal components against that
+    run's own years; line breaks are inserted across year gaps (e.g. the
+    historical-ssp585 1950–2000 gap) so segments aren't joined across them.
+    """
+    pcs = eof_ds["pcs"]
+    years = eof_ds["sample"].values
+    run_of = eof_ds["run"].values
+    runs = list(dict.fromkeys(run_of))
+    n_modes = min(pcs.sizes["mode"], max_modes)
+
+    fig, axes = plt.subplots(len(runs), 1, figsize=(10, 2.6 * len(runs)), squeeze=False)
+    for ax, run in zip(axes[:, 0], runs):
+        m = run_of == run
+        order = np.argsort(years[m])
+        yr = years[m][order].astype(float)
+        gaps = np.where(np.diff(yr) > 1)[0] + 1  # break lines across year gaps
+        yr_b = np.insert(yr, gaps, np.nan)
+        for k in range(n_modes):
+            v = pcs.isel(mode=k).values[m][order]
+            ax.plot(yr_b, np.insert(v, gaps, np.nan), lw=1.0, label=f"PC{k + 1}")
+        ax.axhline(0, color="k", lw=0.5)
+        ax.set_title(run, fontsize=10)
+        ax.set_ylabel("PC amplitude")
+        ax.grid(alpha=0.3)
+    axes[0, 0].legend(fontsize=8, ncol=n_modes, loc="best")
+    axes[-1, 0].set_xlabel("year")
+    fig.suptitle(title, fontsize=12)
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    fig.savefig(out_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
 def plot_predictor_scatter(predictors, out_path):
     """Four-panel scatter of the pooled predictors, points colored by simulation.
 
