@@ -281,14 +281,15 @@ Method (`src/eof.py`):
 - **Area-weighted covariance EOF:** anomalies are multiplied by √(zonal-band area
   weight) before an economy SVD and the patterns divided by it afterward, so the
   EOFs are in physical units. No per-cell standard-deviation normalization.
-- **Truncation:** the leading modes are retained to cumulative **≥ 95 %** of
-  variance (count reported per field/variant). Rank differs sharply by field:
-  annual `tas` is highly low-rank (**2 modes ≈ 96.8 %** — EOF1 a global warming
-  pattern, EOF2 an AMOC/interhemispheric dipole), whereas annual `precip` is not
-  (**237 modes**, EOF1 only ≈ 29 %). Decadal block averaging removes the
-  high-frequency noise that inflates the precip rank, so the decadal precip EOF
-  spectrum is far lower-rank (count reported at run time). `eof_patterns.pdf` maps
-  the leading 9 modes.
+- **Truncation:** two rules combined, the more restrictive winning — keep leading
+  modes until cumulative variance reaches **≥ 95 %**, but never keep a mode that
+  individually explains **< 1 %** of variance (the per-mode floor drops the long
+  low-variance noise tail). Counts are reported per field/variant. `tas` is highly
+  low-rank (**2 modes**, EOF1 a global warming pattern, EOF2 an
+  AMOC/interhemispheric dipole — the 95 % rule binds). For `precip` the 1 % floor
+  binds: decadal precip keeps **5 modes** (89 % cumulative; mode 6 is 0.99 %),
+  versus the 16 modes the bare 95 % rule would retain. `eof_patterns.pdf` maps up
+  to the leading 9 modes.
 - **PC regression:** the retained PCs are regressed on the same predictor sets
   1–9 (including the orthogonalized and quadratic columns) with an intercept; the
   PC-space coefficients (coef/SE/t/p) are saved.
@@ -301,7 +302,22 @@ Outputs per predictand and variant (`data/output/eof/<predictand>/` and
   simulation; lines break across genuine year gaps (e.g. the historical-ssp585
   1950–2000 gap) but stay connected across regular decadal steps.
 - `pc_regression_set{N}_*.nc` — OLS of the PCs on each predictor set (PC-space
-  coef/SE/t/p), plus a caveats `README.txt`.
+  coef/SE/t/p and per-mode R²), plus a caveats `README.txt`.
+
+The **decadal** variant additionally renders the PC-on-scalar regression — the EOF
+analog of the 2D coefficient maps, with the discrete EOF-mode index replacing the
+(lat, lon) grid:
+
+- `pc_regression.pdf` — one **page per predictor set**; each page has one panel per
+  retained EOF mode, with a bar per predictor showing the **standardized**
+  coefficient β·σ(xⱼ)/σ(PCₘ) (z-scoring predictors and the PC, so bars are
+  comparable across modes — raw coefficients scale with each PC's amplitude) and a
+  ±SE whisker. Non-significant bars (p > 0.05) are faded; the panel title reports
+  R² and the mode's variance share. t/p are scale-invariant and match the per-set
+  `pc_regression_set{N}_*.nc`.
+- `pc_prediction.pdf` — one **page per set** (the full 3-index set 6 and the
+  quadratic set 9): the fitted X·β overlaid on the actual PC over time, one panel
+  per simulation — a direct view of how well the scalars predict each EOF weighting.
 
 The spatial **fingerprint** maps (Σₖ βₖ·EOFₖ, the PC regression projected back to
 the grid) are intentionally **not** generated — the EOFs and PC weightings are the

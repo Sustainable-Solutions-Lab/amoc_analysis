@@ -31,14 +31,17 @@ def _sqrt_area_weights(field):
     return np.sqrt(wcell)
 
 
-def compute_eofs(field, variance_threshold=0.95):
+def compute_eofs(field, variance_threshold=0.95, min_variance_fraction=0.0):
     """Area-weighted covariance EOFs of grand-mean anomalies of ``field``.
 
     ``field`` has dims (sample, lat, lon). Returns an xarray Dataset with
     ``eofs`` (mode, lat, lon; physical units, un-weighted), ``pcs`` (sample, mode;
     = U·S, physical amplitude), ``variance_fraction`` (mode), and ``mean_map``
-    (lat, lon). Modes are truncated to the smallest count whose cumulative
-    variance fraction reaches ``variance_threshold`` (use 1.0 to keep all).
+    (lat, lon). Modes are truncated by two rules combined (the more restrictive
+    wins): keep leading modes until the cumulative variance fraction reaches
+    ``variance_threshold`` (use 1.0 to keep all), but never keep a mode that
+    individually explains less than ``min_variance_fraction`` (drops the long
+    low-variance tail; the default 0.0 disables this second rule).
     """
     nlat, nlon = field["lat"].size, field["lon"].size
     mean_map = field.mean("sample")
@@ -49,8 +52,12 @@ def compute_eofs(field, variance_threshold=0.95):
 
     U, S, Vt = np.linalg.svd(A, full_matrices=False)
     var_frac = S**2 / (S**2).sum()
-    n_modes = int(np.searchsorted(np.cumsum(var_frac), variance_threshold) + 1)
-    n_modes = min(n_modes, S.size)
+    # Rule 1: smallest count reaching the cumulative-variance target.
+    n_var = int(np.searchsorted(np.cumsum(var_frac), variance_threshold) + 1)
+    # Rule 2: stop before the first mode below the per-mode floor (sorted desc).
+    below = np.where(var_frac < min_variance_fraction)[0]
+    n_min = int(below[0]) if below.size else S.size
+    n_modes = max(1, min(n_var, n_min, S.size))
 
     pcs = (U[:, :n_modes] * S[:n_modes])
     eofs = (Vt[:n_modes] / sw[None, :]).reshape(n_modes, nlat, nlon)
@@ -78,8 +85,10 @@ def fit_pcs(predictors, pcs):
     """Closed-form OLS of each PC (sample, mode) on ``predictors`` + intercept.
 
     Same normal-equations math as ``regression.fit_grid_ols``; returns a Dataset
-    with ``coef``, ``se``, ``tstat``, ``pvalue`` indexed (param, mode), where
-    ``param`` is ``["intercept", *predictor names]``.
+    with ``coef``, ``se``, ``tstat``, ``pvalue`` indexed (param, mode), ``r2``
+    (mode,) = fraction of each PC's variance explained, and the ``resid``/
+    ``xtx_inv`` retained for fingerprint-variance propagation. ``param`` is
+    ``["intercept", *predictor names]``.
     """
     names = list(predictors.data_vars)
     X = np.column_stack([np.ones(pcs.sizes["sample"])]
@@ -96,6 +105,9 @@ def fit_pcs(predictors, pcs):
     tstat = beta / se
     pvalue = 2.0 * stats.t.sf(np.abs(tstat), df)
 
+    ss_tot = ((Y - Y.mean(axis=0)) ** 2).sum(axis=0)  # (mode,)
+    r2 = 1.0 - (resid**2).sum(axis=0) / ss_tot  # fraction of each PC's variance explained
+
     param = ["intercept"] + names
     dims = ("param", "mode")
     return xr.Dataset(
@@ -104,6 +116,7 @@ def fit_pcs(predictors, pcs):
             "se": (dims, se),
             "tstat": (dims, tstat),
             "pvalue": (dims, pvalue),
+            "r2": (("mode",), r2),
             # Retained for exact fingerprint-variance propagation (see reconstruct):
             "resid": (("sample", "mode"), resid),
             "xtx_inv": (("param", "param_b"), XtX_inv),

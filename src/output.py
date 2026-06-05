@@ -9,6 +9,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import cartopy.crs as ccrs
+import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -27,6 +28,19 @@ SCALAR_AXIS_LABELS = {
 def _symmetric_bound(values):
     """Robust symmetric color bound: the 99th percentile of |values| (NaN-safe)."""
     return float(np.nanpercentile(np.abs(values), 99))
+
+
+def _save_figure(fig, out_path=None, pdf=None):
+    """Write ``fig`` as a standalone PDF (``out_path``) or one page of ``pdf``.
+
+    ``pdf`` is a ``matplotlib.backends.backend_pdf.PdfPages`` handle; when given,
+    the figure is appended as a page (so many figures collect into one file).
+    """
+    if pdf is not None:
+        pdf.savefig(fig, dpi=300, bbox_inches="tight")
+    else:
+        fig.savefig(out_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
 
 
 def plot_coefficient_map(coef, pvalue, title, units, ax, cmap="RdBu_r"):
@@ -190,6 +204,112 @@ def plot_pc_timeseries(eof_ds, title, out_path, max_modes=4):
     fig.tight_layout(rect=(0, 0, 1, 0.97))
     fig.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
+
+
+def plot_pc_regression(pc_fit, predictors, pcs, title, out_path=None,
+                       variance_fraction=None, pdf=None):
+    """Per-mode bar charts of the PC-on-predictor regression (standardized).
+
+    The EOF analog of the 2D coefficient maps: one panel per retained EOF mode,
+    with one bar per predictor. Bar height is the **standardized** coefficient
+    β·σ(xⱼ)/σ(PCₘ) (z-scoring predictors and the PC) so bars are comparable across
+    modes — raw coefficients scale with each PC's amplitude. The whisker is the
+    matching standardized SE. Bars significant at p < ``SIGNIFICANCE_P`` are drawn
+    solid, non-significant ones faded; significance/p come straight from ``pc_fit``
+    (scale-invariant). Panel titles report R² and (if given) the mode's variance
+    fraction. ``predictors`` must contain the regressed columns; ``pcs`` is the
+    (sample, mode) PC array used in the fit.
+    """
+    from regression import PREDICTORS  # local import to avoid an import cycle
+
+    names = [p for p in pc_fit["param"].values if p != "intercept"]
+    labels = [PREDICTORS[p]["label"] for p in names]
+    sigma_x = np.array([predictors[p].values.std() for p in names])  # (k,)
+    sigma_y = pcs.std("sample").values  # (mode,)
+    modes = pc_fit["mode"].values
+    n = modes.size
+
+    ncols = min(4, n)
+    nrows = -(-n // ncols)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(3.6 * ncols, 3.0 * nrows), squeeze=False)
+    flat = list(axes.flat)
+    for ax in flat[n:]:
+        ax.set_visible(False)
+    x = np.arange(len(names))
+    for i, mode in enumerate(modes):
+        ax = flat[i]
+        sel = pc_fit.sel(mode=mode)
+        scale = sigma_x / sigma_y[i]  # standardize each predictor's coefficient
+        beta = sel["coef"].sel(param=names).values * scale
+        err = sel["se"].sel(param=names).values * scale
+        sig = sel["pvalue"].sel(param=names).values < SIGNIFICANCE_P
+        base = np.where(beta >= 0, "#c0392b", "#2c5fa8")  # warm +, cool -
+        rgba = [mcolors.to_rgba(c, 1.0 if s else 0.35) for c, s in zip(base, sig)]
+        ax.bar(x, beta, yerr=err, color=rgba, edgecolor="k", linewidth=0.5, capsize=3)
+        ax.axhline(0, color="k", lw=0.6)
+        vtxt = f", {variance_fraction[i] * 100:.0f}% var" if variance_fraction is not None else ""
+        ax.set_title(f"EOF {int(mode)}  (R²={float(sel['r2'].values):.2f}{vtxt})", fontsize=9)
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels, rotation=45, ha="right", fontsize=7)
+        ax.grid(axis="y", alpha=0.3)
+    for ax in axes[:, 0]:
+        ax.set_ylabel("standardized coef (β·σx/σy)")
+    fig.suptitle(
+        f"{title}\nbars = standardized coefficients; faded = not significant "
+        f"(p > {SIGNIFICANCE_P})", fontsize=11,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    _save_figure(fig, out_path, pdf)
+
+
+def plot_pc_prediction(eof_ds, pc_fit, predictors, title, out_path=None,
+                       pdf=None, max_modes=3):
+    """Overlay the fitted (X·β) PC against the actual PC over time, per simulation.
+
+    A direct view of how well the scalar predictors reproduce each EOF weighting:
+    the fitted PC is ``intercept + Σⱼ βⱼ xⱼ`` in raw PC units. The leading
+    ``max_modes`` modes are drawn (solid = actual, dashed = fitted) on one panel
+    per run; line breaks follow genuine year gaps exactly as in
+    ``plot_pc_timeseries``. ``predictors`` must contain the regressed columns.
+    """
+    pcs = eof_ds["pcs"]
+    years = eof_ds["sample"].values
+    run_of = eof_ds["run"].values
+    runs = list(dict.fromkeys(run_of))
+    params = list(pc_fit["param"].values)
+    names = [p for p in params if p != "intercept"]
+
+    X = np.column_stack([np.ones(pcs.sizes["sample"])] + [predictors[p].values for p in names])
+    coef = pc_fit["coef"].sel(param=params).values  # (k, mode), intercept first
+    fitted = X @ coef  # (sample, mode), aligned with pcs' sample axis
+
+    n_modes = min(pcs.sizes["mode"], max_modes)
+    colors = plt.cm.tab10(np.arange(n_modes))
+    fig, axes = plt.subplots(len(runs), 1, figsize=(10, 2.6 * len(runs)), squeeze=False)
+    for ax, run in zip(axes[:, 0], runs):
+        m = run_of == run
+        order = np.argsort(years[m])
+        yr = years[m][order].astype(float)
+        d = np.diff(yr)
+        thresh = 1.5 * np.median(d) if d.size else np.inf
+        gaps = np.where(d > thresh)[0] + 1
+        yr_b = np.insert(yr, gaps, np.nan)
+        for k in range(n_modes):
+            act = pcs.isel(mode=k).values[m][order]
+            fit_run = fitted[:, k][m][order]
+            ax.plot(yr_b, np.insert(act, gaps, np.nan), lw=1.3, color=colors[k],
+                    label=f"PC{k + 1} actual")
+            ax.plot(yr_b, np.insert(fit_run, gaps, np.nan), lw=1.0, color=colors[k],
+                    ls="--", label=f"PC{k + 1} fitted")
+        ax.axhline(0, color="k", lw=0.5)
+        ax.set_title(run, fontsize=10)
+        ax.set_ylabel("PC amplitude")
+        ax.grid(alpha=0.3)
+    axes[0, 0].legend(fontsize=7, ncol=n_modes, loc="best")
+    axes[-1, 0].set_xlabel("year")
+    fig.suptitle(title, fontsize=12)
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    _save_figure(fig, out_path, pdf)
 
 
 def plot_predictor_scatter(predictors, out_path):
