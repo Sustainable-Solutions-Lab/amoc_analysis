@@ -22,6 +22,14 @@ OUT_BASE = os.path.join(dl._REPO_ROOT, "data", "output", "regression")
 # Predictands to analyze (each writes to its own subdirectory).
 PREDICTAND_NAMES = ["tas", "precip"]
 
+# Smoothing variants. "annual" is the interannual analysis (existing outputs,
+# under <predictand>/); "decadal10" low-passes to slower timescales via 10-year
+# block means and writes to <predictand>/decadal10/.
+SMOOTHINGS = [
+    {"tag": "annual", "block": None, "subdir": ""},
+    {"tag": "decadal10", "block": 10, "subdir": "decadal10"},
+]
+
 CAVEATS = """Regression outputs: pooled per-grid-point OLS of a gridded predictand.
 
 - One regression per grid cell; the years of all four simulations
@@ -29,11 +37,16 @@ CAVEATS = """Regression outputs: pooled per-grid-point OLS of a gridded predicta
   fit with a common intercept and no per-run fixed effects. Pooling exploits
   between-run differences in the index relationships to reduce collinearity.
 - Common sample: years with all predictors (Tglob, dT_NS, AMOC) present, per run
-  (= AMOC-present years), identical for all six sets.
-- p-values are nominal OLS (independent residuals). Within-run autocorrelation of
-  annual data makes them OPTIMISTIC; treat significance as indicative.
-- Set 6 (three predictors) retains high collinearity (VIF ~ 22); its partial
-  coefficients are poorly constrained. See per-set VIF printed at build time.
+  (= AMOC-present years).
+- Two smoothing variants: 'annual' (interannual, this directory) and 'decadal10'
+  (slow timescales, decadal10/ subdir) = non-overlapping 10-year block means
+  applied per run/segment to BOTH predictors and predictand before pooling.
+- p-values are nominal OLS (independent residuals). For 'annual' the within-run
+  autocorrelation of annual data makes them OPTIMISTIC. The 'decadal10' block
+  means decimate to ~independent decadal samples, so its degrees of freedom (and
+  thus p-values) are far more trustworthy -- at the cost of n (~50 vs 500).
+- Set 6 (three predictors) retains high collinearity (annual VIF ~ 22); its
+  partial coefficients are poorly constrained. See per-set VIF printed at build.
 - Coefficient units are [predictand units] / [predictor units] (predictor units:
   Tglob, dT_NS in K; AMOC in Sv).
 - The 'precip' predictand POOLS total pr (historical-ssp585, abrupt-4xCO2) with
@@ -41,20 +54,21 @@ CAVEATS = """Regression outputs: pooled per-grid-point OLS of a gridded predicta
 """
 
 
-def run_for_predictand(name):
+def run_for_predictand(name, smoothing):
     predictand = reg.PREDICTANDS[name]
-    out_dir = os.path.join(OUT_BASE, name)
+    tag = smoothing["tag"]
+    out_dir = os.path.join(OUT_BASE, name, smoothing["subdir"])
     os.makedirs(out_dir, exist_ok=True)
 
-    predictors, response = reg.build_pooled(predictand=predictand)
+    predictors, response = reg.build_pooled(predictand=predictand, block=smoothing["block"])
     predictors = reg.add_orthogonalized_columns(predictors)  # for sets 7-8
     predictors = reg.add_quadratic_columns(predictors)  # for set 9
     per_run = predictors["run"].to_series().value_counts().to_dict()
     vif = reg.variance_inflation_factors(predictors[reg.PREDICTOR_UNION])
-    print(f"\n[{name}] pooled sample: n={predictors.sizes['sample']}  per-run={per_run}")
-    print(f"[{name}] VIF (3-predictor union):", {k: round(v, 2) for k, v in vif.items()})
+    print(f"\n[{name}/{tag}] pooled sample: n={predictors.sizes['sample']}  per-run={per_run}")
+    print(f"[{name}/{tag}] VIF (3-predictor union):", {k: round(v, 2) for k, v in vif.items()})
 
-    run_label = f"predictand={name}; pooled: " + ", ".join(reg.RUNS)
+    run_label = f"predictand={name}; smoothing={tag}; pooled: " + ", ".join(reg.RUNS)
     for set_def in reg.PREDICTOR_SETS:
         names = set_def["predictors"]
         fit = reg.fit_grid_ols(predictors[names], response)
@@ -65,7 +79,7 @@ def run_for_predictand(name):
         plot_set(fit, set_def, run_label, pdf, predictand)
         fit.to_netcdf(nc)
         print(
-            f"[{name}] set {set_def['number']} ({labels}): nobs={fit.attrs['nobs']} "
+            f"[{name}/{tag}] set {set_def['number']} ({labels}): nobs={fit.attrs['nobs']} "
             f"-> {os.path.relpath(pdf, OUT_BASE)}"
         )
 
@@ -75,8 +89,9 @@ def run_for_predictand(name):
 
 def main():
     for name in PREDICTAND_NAMES:
-        run_for_predictand(name)
-    print(f"\nDone. Outputs in {OUT_BASE}/<predictand>/")
+        for smoothing in SMOOTHINGS:
+            run_for_predictand(name, smoothing)
+    print(f"\nDone. Outputs in {OUT_BASE}/<predictand>/[decadal10/]")
 
 
 if __name__ == "__main__":

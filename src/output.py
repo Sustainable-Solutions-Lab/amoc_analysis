@@ -170,7 +170,12 @@ def plot_pc_timeseries(eof_ds, title, out_path, max_modes=4):
         m = run_of == run
         order = np.argsort(years[m])
         yr = years[m][order].astype(float)
-        gaps = np.where(np.diff(yr) > 1)[0] + 1  # break lines across year gaps
+        # Break lines only across a genuine gap, scaled to the sampling interval
+        # (annual: spacing 1, decadal blocks: ~10), so the historical-ssp585 gap
+        # still breaks but regular decadal steps stay connected.
+        d = np.diff(yr)
+        thresh = 1.5 * np.median(d) if d.size else np.inf
+        gaps = np.where(d > thresh)[0] + 1
         yr_b = np.insert(yr, gaps, np.nan)
         for k in range(n_modes):
             v = pcs.isel(mode=k).values[m][order]

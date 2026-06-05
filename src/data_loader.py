@@ -173,6 +173,47 @@ def annual_mean(da):
     return numerator / denominator
 
 
+def block_average_on_years(obj, block):
+    """Non-overlapping ``block``-year means over the ``year`` dimension.
+
+    Works on a Dataset or DataArray carrying a ``year`` dimension. Years are first
+    split into contiguous segments (a segment break is any year-to-year jump > 1,
+    e.g. the historical-ssp585 1950-2000 gap), then within each segment grouped
+    into consecutive blocks of ``block`` years and averaged. A block never spans a
+    segment break, and trailing partial blocks (fewer than ``block`` years) are
+    dropped. The returned object's ``year`` coordinate is each block's mean year
+    (the block midpoint).
+
+    This is the slow-timescale low-pass: applied identically to predictors and
+    predictand, it decimates the annual series to ~independent decadal samples, so
+    the regression characterizes slow variability with honest degrees of freedom.
+    """
+    years = np.asarray(obj["year"].values)
+    segment = np.cumsum(np.r_[0, np.diff(years) > 1])        # segment id per year
+    seg_start = np.r_[0, np.nonzero(np.diff(segment))[0] + 1]  # first index of each segment
+    within = np.arange(years.size) - seg_start[segment]       # position within segment
+    block_in_seg = within // block
+    label = segment * (block_in_seg.max() + 1) + block_in_seg  # unique (segment, block) key
+
+    grouper = xr.DataArray(label, dims="year", coords={"year": obj["year"]}, name="block")
+    ones = xr.DataArray(np.ones(years.size), dims="year", coords={"year": obj["year"]})
+    counts = ones.groupby(grouper).sum().values
+    midyear = (
+        xr.DataArray(years.astype(float), dims="year", coords={"year": obj["year"]})
+        .groupby(grouper)
+        .mean()
+        .values
+    )
+    averaged = obj.groupby(grouper).mean("year")
+
+    full = counts == block  # drop any trailing partial block
+    return (
+        averaged.isel(block=full)
+        .rename(block="year")
+        .assign_coords(year=midyear[full])
+    )
+
+
 def _load_segment(segment, target_var):
     """Open one input file, select/rename the source variable, convert units,
     and return its month-length-weighted annual mean as a DataArray named

@@ -130,7 +130,7 @@ PREDICTOR_SETS = [
 PREDICTOR_UNION = ["tas_global_mean", "tas_interhemispheric_diff", "amoc_strength"]
 
 
-def build_pooled(runs=RUNS, predictor_union=PREDICTOR_UNION, predictand=None):
+def build_pooled(runs=RUNS, predictor_union=PREDICTOR_UNION, predictand=None, block=None):
     """Pool a gridded predictand and scalar predictors across runs onto one axis.
 
     For each run, keep only the years for which every predictor in
@@ -140,6 +140,13 @@ def build_pooled(runs=RUNS, predictor_union=PREDICTOR_UNION, predictand=None):
     Returns ``(predictors, response)`` where ``predictors`` is a Dataset of the
     scalar variables on ``sample`` and ``response`` has dims ``(sample, lat,
     lon)``. A ``run`` coordinate labels each sample's source simulation.
+
+    If ``block`` is given (e.g. 10), each run's predictors and response are
+    low-pass filtered to slower timescales by ``block``-year non-overlapping
+    block means (``data_loader.block_average_on_years``) before pooling -- the
+    same operator applied to both, per run/segment, so their regression
+    relationship is evaluated on the smoothed (decimated) series. ``block=None``
+    keeps the full annual (interannual) sample.
     """
     if predictand is None:
         predictand = PREDICTANDS["tas"]
@@ -158,7 +165,12 @@ def build_pooled(runs=RUNS, predictor_union=PREDICTOR_UNION, predictand=None):
         scal = scal.sel(year=valid)
         resp = resp.sel(year=valid)
 
-        run_label = xr.DataArray(np.full(valid.size, run), dims="year")
+        if block is not None:
+            scal = dl.block_average_on_years(scal, block)
+            resp = dl.block_average_on_years(resp, block)
+
+        n_run = scal.sizes["year"]
+        run_label = xr.DataArray(np.full(n_run, run), dims="year")
         pred_parts.append(scal.assign_coords(run=("year", run_label.data)))
         resp_parts.append(resp.assign_coords(run=("year", run_label.data)))
 

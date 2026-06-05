@@ -235,57 +235,79 @@ caveats `README.txt`. `scripts/plot_predictor_scatter.py` writes
 predictors colored by simulation.
 
 Caveats: p-values are **nominal OLS** (within-run autocorrelation makes them
-optimistic — an effective-degrees-of-freedom correction is planned but not yet
-applied); the 3-index set retains high collinearity (VIF ≈ 22) and the quadratic
-set even after centering (max VIF ≈ 1500), so those coefficients are weakly
-constrained. Fits are validated against `statsmodels` (agreement < 1e-6), and the
-global mean of the `tas`-on-Tglob coefficient is exactly 1.0 (a consistency check).
+optimistic — see the decadal variant below, which largely resolves this); the
+3-index set retains high collinearity (VIF ≈ 22) and the quadratic set even after
+centering (max VIF ≈ 1500), so those coefficients are weakly constrained. Fits are
+validated against `statsmodels` (agreement < 1e-6), and the global mean of the
+`tas`-on-Tglob coefficient is exactly 1.0 (a consistency check).
 
-### EOF / principal-component regression (additive path)
+### Slow-timescale (decadal) variant
 
-`scripts/run_eof_regressions.py` is an **additive alternative** to the direct
-per-grid-point maps: it does not replace `run_regressions.py`, it complements it.
-Instead of fitting every grid cell independently, it decomposes each gridded
-field into a few empirical orthogonal functions (EOFs), regresses the leading
-principal-component (PC) time series on the same predictor sets, and maps the
-coefficients back to space as a "fingerprint" Σₖ βₖ·EOFₖ.
+To characterize variability slower than interannual, `run_regressions.py` (and
+the EOF script below) also produces a **decadal** variant alongside the annual
+one. The low-pass is **non-overlapping 10-year block means**
+(`data_loader.block_average_on_years`), applied **per run, per contiguous
+segment, to both the predictors and the predictand** inside
+`regression.build_pooled(block=10)` *before* pooling — so the identical filter
+acts on dependent and independent variables, and every downstream step (the
+orthogonalized and quadratic columns, the grid OLS, the EOFs) inherits it. Blocks
+never span a run boundary or the historical-ssp585 1950–2000 gap (that run's two
+100-yr segments each give 10 blocks). Each block's timestamp is its midpoint year.
+
+Block averaging is a **decimation**, not a running mean: it collapses each decade
+to one ~independent sample (pooled **n ≈ 50**: historical-ssp585 20, others 10),
+so the nominal OLS degrees of freedom become honest — this resolves the
+annual-variant autocorrelation caveat rather than deferring it, at the cost of
+sample size (df ≈ 40 still supports the 9-term set 9). Quadratic and product terms
+are formed from the *filtered* bases (filter-then-square), i.e. the genuinely
+low-frequency response surface. Decadal results go to
+`data/output/regression/<predictand>/decadal10/` (same filenames as the annual
+outputs, which stay in `<predictand>/`).
+
+### EOF / principal-component analysis (additive path)
+
+`scripts/run_eof_regressions.py` is an **additive** companion to the direct
+per-grid-point maps (it does not replace `run_regressions.py`). It decomposes each
+gridded field into empirical orthogonal functions (EOFs) and examines how the
+leading principal-component (PC) time series — the EOF *weightings over time* —
+behave and relate to the predictors. It is produced for both the annual and the
+decadal variant.
 
 Method (`src/eof.py`):
 
-- **Anomalies** are taken about each cell's **grand temporal mean over all 500
-  pooled samples** (not per-run means) — this retains the between-run forced
-  variability the predictors are meant to explain.
+- **Anomalies** are taken about each cell's **grand temporal mean over all pooled
+  samples** (not per-run means) — this retains the between-run forced variability
+  the predictors are meant to explain.
 - **Area-weighted covariance EOF:** anomalies are multiplied by √(zonal-band area
   weight) before an economy SVD and the patterns divided by it afterward, so the
   EOFs are in physical units. No per-cell standard-deviation normalization.
 - **Truncation:** the leading modes are retained to cumulative **≥ 95 %** of
-  variance (the count is reported per field). The two fields behave very
-  differently: `tas` is highly low-rank — **2 modes ≈ 96.8 %** (EOF1 a global
-  warming pattern, EOF2 an AMOC/interhemispheric dipole) — so the EOF regression
-  is a strong denoising. `precip` is **not** low-rank: it needs **237 modes** to
-  reach 95 % (EOF1 only ≈ 29 %), so at this threshold its fingerprint maps are
-  essentially the full-rank/direct result with little denoising benefit. Only the
-  leading 9 EOF patterns are mapped in `eof_patterns.pdf` (the regression uses all
-  retained modes); to get genuine precip denoising, lower its threshold or fix a
-  small mode count.
+  variance (count reported per field/variant). Rank differs sharply by field:
+  annual `tas` is highly low-rank (**2 modes ≈ 96.8 %** — EOF1 a global warming
+  pattern, EOF2 an AMOC/interhemispheric dipole), whereas annual `precip` is not
+  (**237 modes**, EOF1 only ≈ 29 %). Decadal block averaging removes the
+  high-frequency noise that inflates the precip rank, so the decadal precip EOF
+  spectrum is far lower-rank (count reported at run time). `eof_patterns.pdf` maps
+  the leading 9 modes.
 - **PC regression:** the retained PCs are regressed on the same predictor sets
-  1–9 (including the orthogonalized and quadratic columns) with an intercept.
-- **Fingerprint variance is propagated exactly:** the retained PCs are orthogonal
-  but their regression *residuals* are not, so the coefficient-field variance uses
-  the full cross-mode residual covariance, Var = (XᵀX)⁻¹ⱼⱼ · e(x)ᵀ Σ_resid e(x).
+  1–9 (including the orthogonalized and quadratic columns) with an intercept; the
+  PC-space coefficients (coef/SE/t/p) are saved.
 
-**Key identity (verification):** with *all* modes retained, the reconstructed
-fingerprint reproduces the direct field regression's coefficient **and** p-value
-exactly (Δcoef ~ 1e-10, Δp ~ 1e-8). Truncating to ≥ 95 % variance is therefore a
-controlled denoising of the direct maps.
+Outputs per predictand and variant (`data/output/eof/<predictand>/` and
+`…/decadal10/`):
 
-For each predictand (`tas`, `precip`) the script writes to
-`data/output/eof/<predictand>/`: `eof_patterns.pdf` (the retained EOF maps + a
-variance scree bar), `pc_timeseries.pdf` (the PC weightings vs year, one panel
-per simulation, with line breaks across year gaps such as the 1950–2000 AMOC
-gap), `fingerprint_set{N}_*.pdf` (the EOF-filtered coefficient maps, same panel
-layout and wet=blue / warm=red conventions as the direct maps, stippled p>0.05),
-`pc_regression_set{N}_*.nc` (the PC-space coef/SE/t/p), and a caveats `README.txt`.
+- `eof_patterns.pdf` — the leading EOF spatial patterns + a variance scree.
+- `pc_timeseries.pdf` — the **EOF weightings (PCs) over time**, one panel per
+  simulation; lines break across genuine year gaps (e.g. the historical-ssp585
+  1950–2000 gap) but stay connected across regular decadal steps.
+- `pc_regression_set{N}_*.nc` — OLS of the PCs on each predictor set (PC-space
+  coef/SE/t/p), plus a caveats `README.txt`.
+
+The spatial **fingerprint** maps (Σₖ βₖ·EOFₖ, the PC regression projected back to
+the grid) are intentionally **not** generated — the EOFs and PC weightings are the
+wanted deliverables. The capability remains in `eof.reconstruct_fingerprint`
+(verified: with all modes retained it reproduces the direct field regression's
+coefficient *and* p-value to Δcoef ~ 1e-10, Δp ~ 1e-8) should maps be wanted later.
 
 ## Reproducing the results
 
@@ -295,10 +317,13 @@ dependencies, run, in order:
 ```bash
 python scripts/make_annual_means.py        # data/processed/{tas,pr,prc}_annual_*.nc
 python scripts/make_scalar_timeseries.py   # data/processed/scalars_annual_*.nc
-python scripts/run_regressions.py          # data/output/regression/{tas,precip}/coef_set*.{pdf,nc}
+python scripts/run_regressions.py          # data/output/regression/{tas,precip}/[decadal10/]coef_set*.{pdf,nc}
 python scripts/plot_predictor_scatter.py   # data/output/regression/predictor_scatter.pdf
-python scripts/run_eof_regressions.py      # data/output/eof/{tas,precip}/{eof_patterns,pc_timeseries,fingerprint_set*}.pdf
+python scripts/run_eof_regressions.py      # data/output/eof/{tas,precip}/[decadal10/]{eof_patterns,pc_timeseries}.pdf, pc_regression_set*.nc
 ```
+
+`run_regressions.py` and `run_eof_regressions.py` each produce both the **annual**
+and the **decadal10** (slow-timescale) variant in one invocation.
 
 Each script is a thin wrapper over `src/` and prints what it writes. All outputs
 land under `data/` (git-ignored) and are fully regenerable from the inputs.
@@ -309,5 +334,7 @@ Preprocessing (`scripts/make_annual_means.py`,
 `scripts/make_scalar_timeseries.py`), pooled per-grid-point regression analysis
 (`scripts/run_regressions.py`, sets 1–9 for tas and precip), predictor scatter
 (`scripts/plot_predictor_scatter.py`), and the additive EOF / principal-component
-regression path (`scripts/run_eof_regressions.py`, built on `src/eof.py`), all
-built on `src/data_loader.py`, `src/regression.py`, and `src/output.py`.
+path (`scripts/run_eof_regressions.py`, built on `src/eof.py`), all built on
+`src/data_loader.py`, `src/regression.py`, and `src/output.py`. Both the
+regression and EOF analyses run in an **annual** (interannual) and a **decadal10**
+(10-year block-mean, slow-timescale) variant.
