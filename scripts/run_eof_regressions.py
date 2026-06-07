@@ -64,9 +64,9 @@ CAVEATS = """EOF / principal-component analysis outputs (additive to the direct 
       panel title shows R^2 and % var. Standardizing makes bars comparable across
       modes (raw coefs scale with each PC's amplitude). t/p are scale-invariant
       (same as the per-set pc_regression_set{N}_*.nc files).
-    * pc_prediction.pdf -- one PAGE per set (6 and 9): fitted (X*beta) vs actual PC
-      over time per simulation, a direct view of how well the scalars predict each
-      weighting.
+    * pc_prediction.pdf -- one PAGE per set (6, 9, 10): fitted (X*beta) vs actual
+      PC over time per simulation, a direct view of how well the scalars predict
+      each weighting.
 - Two smoothing variants: 'annual' (interannual, this directory) and 'decadal10'
   (decadal10/ subdir) = 10-year block means per run/segment before pooling.
 - Annual tas is strongly low-rank (2 modes >=95%); annual precip is not
@@ -129,12 +129,13 @@ def run_for_predictand(name, smoothing):
             )
         print(f"[{name}/{tag}] set {num} ({labels}) regressed")
 
-    # Direct "predict the weightings" view for the richer sets (full 3-index and
-    # quadratic): fitted vs actual PC over time, one page per set, decadal only.
+    # Direct "predict the weightings" view for the richer sets (full 3-index,
+    # quadratic, and Tglob×AMOC interaction): fitted vs actual PC over time, one
+    # page per set, decadal only.
     if decadal:
         reg_pdf.close()
         with PdfPages(os.path.join(out_dir, "pc_prediction.pdf")) as pred_pdf:
-            for num in (6, 9):
+            for num in (6, 9, 10):
                 pc_fit, names = fits[num]
                 plot_pc_prediction(
                     eof_ds, pc_fit, predictors[names],

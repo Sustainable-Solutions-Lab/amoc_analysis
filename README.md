@@ -204,7 +204,7 @@ Pooling exploits the runs' disagreement about how the indices co-vary (piControl
 collinearity. All sets use one common sample: the years where every predictor is
 present (= AMOC-present years), **500 rows** (historical-ssp585 200, others 100).
 
-Nine predictor sets are produced (one multi-panel coefficient map per set, per
+Ten predictor sets are produced (one multi-panel coefficient map per set, per
 predictand):
 
 | Set | Predictors |
@@ -214,6 +214,7 @@ predictand):
 | 7 | orthogonalized, order tas→NS→AMOC: `Tglob`, `dT_NS⊥Tglob`, `AMOC⊥(Tglob,dT_NS)` |
 | 8 | orthogonalized, order tas→AMOC→NS: `Tglob`, `AMOC⊥Tglob`, `dT_NS⊥(Tglob,AMOC)` |
 | 9 | full quadratic (centered): Tglob, Tglob², AMOC, AMOC², dT_NS, dT_NS², Tglob·AMOC, Tglob·dT_NS, AMOC·dT_NS |
+| 10 | Tglob × AMOC interaction (centered): Tglob, AMOC, Tglob·AMOC |
 
 - **Sets 4–6** use full multiple OLS → each map is that predictor's **partial**
   coefficient (effect holding the others fixed).
@@ -225,6 +226,11 @@ predictand):
   three base indices are **centered on their pooled means** before squares and
   products are formed (essential for conditioning: cond(XᵀX) drops from ~1e20 to
   ~1e5). Its 9 term coefficients are mapped on a 3×3 grid.
+- **Set 10** is the global-temperature × AMOC interaction model (reusing the
+  centered `add_quadratic_columns` terms): Tglob, AMOC, and Tglob·AMOC. Centering
+  the main effects conditions the design and makes each main-effect coefficient
+  the response at the *other* index's mean; the interaction coefficient is
+  identical to the uncentered form.
 
 Coefficient maps (`src/output.py`) use a diverging colormap with symmetric bounds
 (white = 0; `RdBu_r` for tas with warm = red, `RdBu` for precip with wet = blue)
@@ -291,8 +297,8 @@ Method (`src/eof.py`):
   versus the 16 modes the bare 95 % rule would retain. `eof_patterns.pdf` maps up
   to the leading 9 modes.
 - **PC regression:** the retained PCs are regressed on the same predictor sets
-  1–9 (including the orthogonalized and quadratic columns) with an intercept; the
-  PC-space coefficients (coef/SE/t/p) are saved.
+  1–10 (including the orthogonalized, quadratic, and interaction columns) with an
+  intercept; the PC-space coefficients (coef/SE/t/p) are saved.
 
 Outputs per predictand and variant (`data/output/eof/<predictand>/` and
 `…/decadal10/`):
@@ -348,7 +354,7 @@ land under `data/` (git-ignored) and are fully regenerable from the inputs.
 
 Preprocessing (`scripts/make_annual_means.py`,
 `scripts/make_scalar_timeseries.py`), pooled per-grid-point regression analysis
-(`scripts/run_regressions.py`, sets 1–9 for tas and precip), predictor scatter
+(`scripts/run_regressions.py`, sets 1–10 for tas and precip), predictor scatter
 (`scripts/plot_predictor_scatter.py`), and the additive EOF / principal-component
 path (`scripts/run_eof_regressions.py`, built on `src/eof.py`), all built on
 `src/data_loader.py`, `src/regression.py`, and `src/output.py`. Both the

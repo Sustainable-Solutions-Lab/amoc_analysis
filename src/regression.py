@@ -124,6 +124,13 @@ PREDICTOR_SETS = [
             "q_Tglob.AMOC", "q_Tglob.dT_NS", "q_AMOC.dT_NS",
         ],
     },
+    # Global-temperature x AMOC interaction model (centered main effects so the
+    # interaction coefficient is well conditioned and each main effect is read at
+    # the other's mean): Tglob, AMOC, Tglob*AMOC.
+    {
+        "number": 10,
+        "predictors": ["q_Tglob", "q_AMOC", "q_Tglob.AMOC"],
+    },
 ]
 
 # Union of all predictors used in any set; defines the common sample of years.
