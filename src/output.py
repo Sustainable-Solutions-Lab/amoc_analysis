@@ -12,6 +12,7 @@ import cartopy.crs as ccrs
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.lines import Line2D
 
 SIGNIFICANCE_P = 0.05
 PROJECTION = ccrs.PlateCarree(central_longitude=0)
@@ -310,6 +311,64 @@ def plot_pc_prediction(eof_ds, pc_fit, predictors, title, out_path=None,
     fig.suptitle(title, fontsize=12)
     fig.tight_layout(rect=(0, 0, 1, 0.97))
     _save_figure(fig, out_path, pdf)
+
+
+def plot_scalar_timeseries(annual, decadal, title, out_path):
+    """Per-simulation time series of the scalar predictors, annual + decadal overlay.
+
+    One panel per simulation. Tglob and ΔT_NS share the left axis as **anomalies
+    from their pooled means** (they cannot share a raw axis — Tglob is ~287 K,
+    ΔT_NS only a few K); AMOC strength is on a right axis in **absolute Sv** (its
+    own axis, so real magnitudes and any collapse stay visible). Annual values are
+    thin lines; decadal block means are overlaid as marked lines (centered on the
+    same annual baseline, so they sit on the annual curves). Lines break across
+    genuine year gaps (e.g. the historical-ssp585 1950–2000 gap). ``annual`` and
+    ``decadal`` are pooled predictor Datasets (variables on ``sample`` with a
+    ``run`` coord) from ``regression.build_pooled`` (block=None and block=10).
+    """
+    left_vars = [("tas_global_mean", "Tglob", "C0"),
+                 ("tas_interhemispheric_diff", "ΔT_NS", "C1")]
+    ref = {v: float(annual[v].values.mean()) for v, _, _ in left_vars}  # shared baseline
+    runs = list(dict.fromkeys(annual["run"].values))
+
+    fig, axes = plt.subplots(len(runs), 1, figsize=(11, 2.9 * len(runs)), squeeze=False)
+    for ax, run in zip(axes[:, 0], runs):
+        ax2 = ax.twinx()
+        for ds, style in [(annual, dict(lw=0.9, alpha=0.65)),
+                          (decadal, dict(lw=1.8, marker="o", ms=3))]:
+            m = ds["run"].values == run
+            yr = ds["sample"].values[m].astype(float)
+            order = np.argsort(yr)
+            yr = yr[order]
+            d = np.diff(yr)
+            thresh = 1.5 * np.median(d) if d.size else np.inf  # break only real gaps
+            gaps = np.where(d > thresh)[0] + 1
+            yr_b = np.insert(yr, gaps, np.nan)
+            for var, _lbl, c in left_vars:
+                v = ds[var].values[m][order] - ref[var]
+                ax.plot(yr_b, np.insert(v, gaps, np.nan), color=c, **style)
+            a = ds["amoc_strength"].values[m][order]
+            ax2.plot(yr_b, np.insert(a, gaps, np.nan), color="C3", **style)
+        ax.axhline(0, color="k", lw=0.5)
+        ax.set_title(run, fontsize=10)
+        ax.set_ylabel("Tglob, ΔT_NS anomaly (K)")
+        ax2.set_ylabel("AMOC (Sv)", color="C3")
+        ax2.tick_params(axis="y", labelcolor="C3")
+        ax.grid(alpha=0.3)
+    axes[-1, 0].set_xlabel("year")
+
+    handles = [
+        Line2D([], [], color="C0", label="Tglob (left, K anomaly)"),
+        Line2D([], [], color="C1", label="ΔT_NS (left, K anomaly)"),
+        Line2D([], [], color="C3", label="AMOC (right, Sv)"),
+        Line2D([], [], color="0.4", lw=0.9, label="annual"),
+        Line2D([], [], color="0.4", lw=1.8, marker="o", ms=3, label="decadal mean"),
+    ]
+    axes[0, 0].legend(handles=handles, fontsize=8, ncol=5, loc="best", framealpha=0.9)
+    fig.suptitle(title, fontsize=12)
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    fig.savefig(out_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
 
 
 def plot_predictor_scatter(predictors, out_path):

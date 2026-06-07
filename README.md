@@ -238,7 +238,11 @@ and **stipple cells where p > 0.05**. Each set writes a PDF and a NetCDF of the
 coefficient/SE/t/p/R² fields to `data/output/regression/<predictand>/`, plus a
 caveats `README.txt`. `scripts/plot_predictor_scatter.py` writes
 `data/output/regression/predictor_scatter.pdf`, a 4-panel scatter of the pooled
-predictors colored by simulation.
+predictors colored by simulation. `scripts/plot_scalar_timeseries.py` writes
+`data/output/regression/predictor_timeseries.pdf`, the predictors as time series
+(one panel per simulation): Tglob and ΔT_NS as anomalies from their pooled means on
+the left axis (K), AMOC absolute on a right axis (Sv), with the decadal block means
+overlaid on the annual lines.
 
 Caveats: p-values are **nominal OLS** (within-run autocorrelation makes them
 optimistic — see the decadal variant below, which largely resolves this); the
@@ -321,15 +325,50 @@ analog of the 2D coefficient maps, with the discrete EOF-mode index replacing th
   ±SE whisker. Non-significant bars (p > 0.05) are faded; the panel title reports
   R² and the mode's variance share. t/p are scale-invariant and match the per-set
   `pc_regression_set{N}_*.nc`.
-- `pc_prediction.pdf` — one **page per set** (the full 3-index set 6 and the
-  quadratic set 9): the fitted X·β overlaid on the actual PC over time, one panel
-  per simulation — a direct view of how well the scalars predict each EOF weighting.
+- `pc_prediction.pdf` — one **page per set** (the full 3-index set 6, the quadratic
+  set 9, and the interaction set 10): the fitted X·β overlaid on the actual PC over
+  time, one panel per simulation — a direct view of how well the scalars predict
+  each EOF weighting.
 
 The spatial **fingerprint** maps (Σₖ βₖ·EOFₖ, the PC regression projected back to
 the grid) are intentionally **not** generated — the EOFs and PC weightings are the
 wanted deliverables. The capability remains in `eof.reconstruct_fingerprint`
 (verified: with all modes retained it reproduces the direct field regression's
 coefficient *and* p-value to Δcoef ~ 1e-10, Δp ~ 1e-8) should maps be wanted later.
+
+### Scenario prediction: where AMOC slowdown exacerbates vs. ameliorates CO₂ change
+
+`scripts/predict_scenarios.py` uses the **decadal** set 5 (Tglob + AMOC) and set 10
+(Tglob + AMOC + Tglob·AMOC) coefficient maps to predict end-of-century field changes
+and isolate the AMOC-slowdown contribution. It addresses: *where does AMOC slowdown
+exacerbate CO₂-induced changes in surface temperature and precipitation, and where
+does it ameliorate them?*
+
+The high-CO₂ world **with** AMOC slowdown (SSP585, 2091–2100) is compared against two
+counterfactuals **without** slowdown (AMOC restored to the control value), which
+bracket the unknown global-mean-temperature effect of the slowdown:
+
+| condition | Tglob (K) | AMOC (Sv) | meaning |
+| --- | --- | --- | --- |
+| piControl | 287.207 | 17.44 | preindustrial baseline (years 700–799) |
+| SSP585 | 293.090 | 7.34 | end-of-century, with slowdown |
+| SSP585-adj1 | 294.665 | 17.44 | assm. 1: slowdown cooled by 0.1558 K/Sv × 10.10 Sv ≈ 1.575 K, added back |
+| SSP585-adj2 | 293.090 | 17.44 | assm. 2: slowdown had no global-mean-T effect; only AMOC restored |
+
+The 0.1558 ± 0.0042 K/Sv slope is the OLS of global-mean tas on AMOC in the u03-hos
+hosing run (a within-experiment correlation, not a transferable causal sensitivity).
+
+The predicted change between two conditions is `coef · (predictor(X) − predictor(R))`
+(the intercept cancels; set 10 evaluates its centered columns and interaction with the
+decadal pooled means). Each predictand is a **two-page** PDF
+(`data/output/scenarios/predicted_change_{tas,precip}.pdf`), rows = set 5 and set 10:
+page 1 (2×3) is the change relative to piControl — **SSP585 − piControl**,
+**adj1 − piControl**, **adj2 − piControl**; page 2 (2×2) is the AMOC-slowdown effect —
+**SSP585 − adj1**, **SSP585 − adj2**. Under adj2 global-mean tas is held fixed, so
+`SSP585 − adj2` is pure spatial redistribution (global mean exactly 0). Comparing the
+sign of the AMOC effect (page 2) against the CO₂-only change (`adjN − piControl`, page 1)
+shows where the slowdown adds to (exacerbates) or opposes (ameliorates) the CO₂ response
+— e.g. for tas the subpolar North Atlantic cold blob, for precip an ITCZ-shift dipole.
 
 ## Reproducing the results
 
@@ -341,7 +380,9 @@ python scripts/make_annual_means.py        # data/processed/{tas,pr,prc}_annual_
 python scripts/make_scalar_timeseries.py   # data/processed/scalars_annual_*.nc
 python scripts/run_regressions.py          # data/output/regression/{tas,precip}/[decadal10/]coef_set*.{pdf,nc}
 python scripts/plot_predictor_scatter.py   # data/output/regression/predictor_scatter.pdf
+python scripts/plot_scalar_timeseries.py   # data/output/regression/predictor_timeseries.pdf
 python scripts/run_eof_regressions.py      # data/output/eof/{tas,precip}/[decadal10/]{eof_patterns,pc_timeseries}.pdf, pc_regression_set*.nc
+python scripts/predict_scenarios.py        # data/output/scenarios/predicted_change_{tas,precip}.pdf
 ```
 
 `run_regressions.py` and `run_eof_regressions.py` each produce both the **annual**
@@ -355,8 +396,10 @@ land under `data/` (git-ignored) and are fully regenerable from the inputs.
 Preprocessing (`scripts/make_annual_means.py`,
 `scripts/make_scalar_timeseries.py`), pooled per-grid-point regression analysis
 (`scripts/run_regressions.py`, sets 1–10 for tas and precip), predictor scatter
-(`scripts/plot_predictor_scatter.py`), and the additive EOF / principal-component
-path (`scripts/run_eof_regressions.py`, built on `src/eof.py`), all built on
+and time series (`scripts/plot_predictor_scatter.py`,
+`scripts/plot_scalar_timeseries.py`), and the additive EOF / principal-component
+path (`scripts/run_eof_regressions.py`, built on `src/eof.py`), and the decadal
+scenario-prediction maps (`scripts/predict_scenarios.py`), all built on
 `src/data_loader.py`, `src/regression.py`, and `src/output.py`. Both the
 regression and EOF analyses run in an **annual** (interannual) and a **decadal10**
 (10-year block-mean, slow-timescale) variant.
