@@ -44,17 +44,19 @@ def _save_figure(fig, out_path=None, pdf=None):
     plt.close(fig)
 
 
-def plot_coefficient_map(coef, pvalue, title, units, ax, cmap="RdBu_r"):
+def plot_coefficient_map(coef, pvalue, title, units, ax, cmap="RdBu_r", bound=None):
     """Draw one coefficient map on a Cartopy ``ax``: filled field + p>0.05 stippling.
 
     ``coef`` and ``pvalue`` are 2-D (lat, lon) DataArrays. ``cmap`` is a diverging
     colormap (white = 0); use ``RdBu_r`` for temperature (warm = red) and ``RdBu``
-    for precipitation (wet = blue). Returns the mappable for colorbar creation.
+    for precipitation (wet = blue). The symmetric color scale is fixed to ±``bound``
+    if given, else the 99th percentile of |coef| (values beyond saturate). Returns
+    the mappable for colorbar creation.
     """
     lon, lat = coef["lon"], coef["lat"]
-    bound = _symmetric_bound(coef.values)
+    b = bound if bound is not None else _symmetric_bound(coef.values)
     mesh = ax.pcolormesh(
-        lon, lat, coef, cmap=cmap, vmin=-bound, vmax=bound,
+        lon, lat, coef, cmap=cmap, vmin=-b, vmax=b,
         shading="auto", transform=DATA_CRS,
     )
     # Stipple where NOT significant (p > 0.05).

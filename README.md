@@ -360,15 +360,20 @@ hosing run (a within-experiment correlation, not a transferable causal sensitivi
 
 The predicted change between two conditions is `coef · (predictor(X) − predictor(R))`
 (the intercept cancels; set 10 evaluates its centered columns and interaction with the
-decadal pooled means). Each predictand is a **two-page** PDF
+decadal pooled means). Each predictand is a **three-page** PDF
 (`data/output/scenarios/predicted_change_{tas,precip}.pdf`), rows = set 5 and set 10:
 page 1 (2×3) is the change relative to piControl — **SSP585 − piControl**,
 **adj1 − piControl**, **adj2 − piControl**; page 2 (2×2) is the AMOC-slowdown effect —
-**SSP585 − adj1**, **SSP585 − adj2**. Under adj2 global-mean tas is held fixed, so
+**SSP585 − adj1**, **SSP585 − adj2**; page 3 (2×2) expresses that effect as the
+**fractional increase(+)/decrease(−) in the response caused by the slowdown**, i.e.
+`(SSP585 − adjN) / (adjN − piControl) × 100` — the AMOC effect divided by the
+*no-slowdown CO₂-only* change. Under adj2 global-mean tas is held fixed, so
 `SSP585 − adj2` is pure spatial redistribution (global mean exactly 0). Comparing the
 sign of the AMOC effect (page 2) against the CO₂-only change (`adjN − piControl`, page 1)
 shows where the slowdown adds to (exacerbates) or opposes (ameliorates) the CO₂ response
 — e.g. for tas the subpolar North Atlantic cold blob, for precip an ITCZ-shift dipole.
+On page 3 the ratio explodes where the denominator crosses zero; tas is well behaved and
+auto-scales, while the precip color scale is clamped to ±50 % (well inside ±100 %).
 
 ## Reproducing the results
 

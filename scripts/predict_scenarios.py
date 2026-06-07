@@ -64,12 +64,24 @@ SCENARIOS = [
     ("SSP585 − adj2  (AMOC effect, assm.2)", "SSP585", "SSP585-adj2"),
 ]
 
-# Two-page layout: page 1 = the change-relative-to-piControl maps (cols 1,2,4);
-# page 2 = the AMOC-slowdown effect maps (cols 3,5). Values index SCENARIOS.
+# Page layout. A column is either an int (an absolute map of SCENARIOS[i]) or a
+# tuple (title, numerator_idx, denominator_idx) giving a percentage ratio
+# 100 * change(num) / change(den). Page 1 = change relative to piControl (cols
+# 1,2,4); page 2 = AMOC-slowdown effect (cols 3,5); page 3 = that effect as a
+# percentage of the no-slowdown CO2-only change, i.e. (SSP585-adjN)/(adjN-piControl)
+# -- the fractional increase(+)/decrease(-) in the response caused by the slowdown.
 PAGES = [
     ("change relative to piControl (with / without AMOC slowdown)", [0, 1, 3]),
     ("AMOC-slowdown effect (SSP585 − adjN)", [2, 4]),
+    ("AMOC-slowdown effect as % of the no-slowdown CO₂ change  [(SSP585−adjN)/(adjN−piControl)]",
+     [("SSP585 − adj1  ÷ (adj1 − piControl)", 2, 1),
+      ("SSP585 − adj2  ÷ (adj2 − piControl)", 4, 3)]),
 ]
+
+# The page-3 ratio explodes where the denominator (adjN−piControl) crosses zero;
+# clamp the precipitation color scale (well inside ±100%). tas is well behaved
+# (its CO2-only change is large and same-signed), so it auto-scales.
+PRECIP_RATIO_PCT_BOUND = 50.0
 
 SET_FILES = {
     5: "coef_set5_Tglob-AMOC.nc",
@@ -101,6 +113,7 @@ def run_for_predictand(name, mT, mA):
         for s in sets
     }
 
+    ratio_bound = PRECIP_RATIO_PCT_BOUND if name == "precip" else None
     out_path = os.path.join(OUT_DIR, f"predicted_change_{name}.pdf")
     with PdfPages(out_path) as pdf:
         for page_title, cols in PAGES:
@@ -110,13 +123,24 @@ def run_for_predictand(name, mT, mA):
                 squeeze=False, subplot_kw={"projection": PROJECTION},
             )
             for i, set_num in enumerate(sets):
-                for j, ci in enumerate(cols):
-                    title, condX, condR = SCENARIOS[ci]
-                    change = predicted_change(coefs[set_num], set_num, condX, condR, mT, mA)
+                coef = coefs[set_num]
+                for j, col in enumerate(cols):
+                    if isinstance(col, tuple):  # ratio column: (title, num_idx, den_idx)
+                        title, ni, di = col
+                        num = predicted_change(coef, set_num, SCENARIOS[ni][1], SCENARIOS[ni][2], mT, mA)
+                        den = predicted_change(coef, set_num, SCENARIOS[di][1], SCENARIOS[di][2], mT, mA)
+                        with np.errstate(divide="ignore", invalid="ignore"):
+                            ratio = 100.0 * num / den
+                        change = ratio.where(np.isfinite(ratio))
+                        u, bnd = "% of CO₂-only change", ratio_bound
+                    else:  # absolute map of SCENARIOS[col]
+                        title, condX, condR = SCENARIOS[col]
+                        change = predicted_change(coef, set_num, condX, condR, mT, mA)
+                        u, bnd = f"Δ{name} ({units})", None
                     plot_coefficient_map(
                         change, xr.zeros_like(change),  # zeros -> no stippling
-                        title=f"set {set_num}: {title}", units=f"Δ{name} ({units})",
-                        ax=axes[i, j], cmap=cmap,
+                        title=f"set {set_num}: {title}", units=u,
+                        ax=axes[i, j], cmap=cmap, bound=bnd,
                     )
             fig.suptitle(
                 f"Predicted decadal-mean {name} change (decadal10 regressions)\n"
@@ -125,7 +149,7 @@ def run_for_predictand(name, mT, mA):
             fig.tight_layout(rect=(0, 0, 1, 0.96))
             pdf.savefig(fig, dpi=300, bbox_inches="tight")
             plt.close(fig)
-    print(f"wrote {out_path}  (2 pages)")
+    print(f"wrote {out_path}  ({len(PAGES)} pages)")
 
 
 def main():
