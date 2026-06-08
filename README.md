@@ -372,8 +372,9 @@ page 1 (2×3) is the change relative to piControl — **SSP585 − piControl**,
 sign of the AMOC effect (page 2) against the CO₂-only change (`adjN − piControl`, page 1)
 shows where the slowdown adds to (exacerbates) or opposes (ameliorates) the CO₂ response
 — e.g. for tas the subpolar North Atlantic cold blob, for precip an ITCZ-shift dipole.
-On page 3 the ratio explodes where the denominator crosses zero; tas is well behaved and
-auto-scales, while the precip color scale is clamped to ±50 % (well inside ±100 %).
+On page 3 the ratio explodes where the denominator crosses zero, so every page-3 panel
+uses a common fixed **±100 %** color scale (values beyond saturate) to keep panels
+directly comparable.
 
 ## Reproducing the results
 
@@ -395,6 +396,10 @@ and the **decadal10** (slow-timescale) variant in one invocation.
 
 Each script is a thin wrapper over `src/` and prints what it writes. All outputs
 land under `data/` (git-ignored) and are fully regenerable from the inputs.
+
+Utility: `python scripts/split_pdf_into_pages.py <file.pdf>` splits a multi-page
+figure PDF into one file per page (`<file>_page01.pdf`, `_page02.pdf`, … in the
+same directory) for pasting individual panels into LaTeX.
 
 ## Status
 

@@ -7,3 +7,4 @@ xarray
 netCDF4
 dask
 cartopy
+pypdf

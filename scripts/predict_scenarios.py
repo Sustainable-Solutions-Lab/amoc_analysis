@@ -78,10 +78,10 @@ PAGES = [
       ("SSP585 − adj2  ÷ (adj2 − piControl)", 4, 3)]),
 ]
 
-# The page-3 ratio explodes where the denominator (adjN−piControl) crosses zero;
-# clamp the precipitation color scale (well inside ±100%). tas is well behaved
-# (its CO2-only change is large and same-signed), so it auto-scales.
-PRECIP_RATIO_PCT_BOUND = 50.0
+# The page-3 ratio explodes where the denominator (adjN−piControl) crosses zero.
+# Fix every page-3 panel to a common +/-100% scale so panels are directly
+# comparable (values beyond +/-100% saturate).
+RATIO_PCT_BOUND = 100.0
 
 SET_FILES = {
     5: "coef_set5_Tglob-AMOC.nc",
@@ -113,7 +113,7 @@ def run_for_predictand(name, mT, mA):
         for s in sets
     }
 
-    ratio_bound = PRECIP_RATIO_PCT_BOUND if name == "precip" else None
+    ratio_bound = RATIO_PCT_BOUND  # common ±100% scale on page 3 for all panels
     out_path = os.path.join(OUT_DIR, f"predicted_change_{name}.pdf")
     with PdfPages(out_path) as pdf:
         for page_title, cols in PAGES:
