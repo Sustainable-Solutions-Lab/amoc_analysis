@@ -93,6 +93,12 @@ rather than hiding them.
 - Clean fail-fast approach — if required arguments are not supplied, the code
   should fail immediately with a clear error.
 
+## Version Control
+- Do not concern yourself with committing or pushing to the remote repository.
+  The user manages git commits and pushes; do not offer to commit/push, ask
+  whether to, or run `git commit`/`git push` unless explicitly instructed to in a
+  specific request.
+
 ## Plotting Conventions
 - **File format**: Save figures as PDF. Use
   `fig.savefig(path, dpi=300, bbox_inches='tight')`.
