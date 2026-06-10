@@ -20,7 +20,7 @@ from output import plot_set
 OUT_BASE = os.path.join(dl._REPO_ROOT, "data", "output", "regression")
 
 # Predictands to analyze (each writes to its own subdirectory).
-PREDICTAND_NAMES = ["tas", "precip"]
+PREDICTAND_NAMES = ["tas", "prc"]
 
 # Smoothing variants. "annual" is the interannual analysis (existing outputs,
 # under <predictand>/); "decadal10" low-passes to slower timescales via 10-year
@@ -49,8 +49,9 @@ CAVEATS = """Regression outputs: pooled per-grid-point OLS of a gridded predicta
   partial coefficients are poorly constrained. See per-set VIF printed at build.
 - Coefficient units are [predictand units] / [predictor units] (predictor units:
   Tglob, dT_NS in K; AMOC in Sv).
-- The 'precip' predictand POOLS total pr (historical-ssp585, abrupt-4xCO2) with
-  CONVECTIVE prc (piControl, u03-hos) -- different quantities, prototype only.
+- The 'prc' predictand is CONVECTIVE precipitation uniformly for all runs. For
+  historical-ssp585 the r1->r4 member splice (historical r1i1p1f1, ssp585 r4i1p1f1)
+  is identical for prc, tas, and AMOC, so predictand and predictors stay consistent.
 """
 
 
@@ -73,10 +74,21 @@ def run_for_predictand(name, smoothing):
         names = set_def["predictors"]
         fit = reg.fit_grid_ols(predictors[names], response)
 
+        centering = reg.centering_means_for_set(predictors, names)
+        for tag, (mean, units) in centering.items():
+            fit.attrs[f"centering_mean_{tag}_{units}"] = mean
+        if centering:
+            fit.attrs["centering_note"] = (
+                "Centered (q_) predictors were demeaned by these pooled means before "
+                "fitting; subtract them from raw values before applying the centered "
+                "terms. The cross-product (interaction) coefficient is read relative "
+                "to these means."
+            )
+
         labels = "-".join(reg.PREDICTORS[p]["tag"] for p in names)
         pdf = os.path.join(out_dir, f"coef_set{set_def['number']}_{labels}.pdf")
         nc = os.path.join(out_dir, f"coef_set{set_def['number']}_{labels}.nc")
-        plot_set(fit, set_def, run_label, pdf, predictand)
+        plot_set(fit, set_def, run_label, pdf, predictand, centering)
         fit.to_netcdf(nc)
         print(
             f"[{name}/{tag}] set {set_def['number']} ({labels}): nobs={fit.attrs['nobs']} "

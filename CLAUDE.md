@@ -122,6 +122,7 @@ rather than hiding them.
 - **Missing data in regressions**: If the dependent variable or any predictor
   has missing data (`NaN`) for some years, drop those years from the fit
   (listwise / complete-case deletion) rather than imputing or interpolating.
-  For example, the combined historical+ssp585 AMOC series is missing 1950–2000;
-  a regression using it simply omits those years. State in the output how many
-  years were used after dropping incomplete cases.
+  For example, the AMOC series for the abrupt-4xCO2 and u03-hos runs cover only
+  the first 100 years, so the NaN-padded later years are omitted; a regression
+  using AMOC simply uses each run's AMOC-present years. State in the output how
+  many years were used after dropping incomplete cases.

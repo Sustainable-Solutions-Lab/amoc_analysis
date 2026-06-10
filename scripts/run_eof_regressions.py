@@ -1,6 +1,6 @@
 """EOF / principal-component analysis of pooled gridded fields (additive path).
 
-For each predictand (tas, precip): compute area-weighted covariance EOFs of the
+For each predictand (tas, prc): compute area-weighted covariance EOFs of the
 grand-mean anomalies over the pooled AMOC-complete sample, plot the leading EOF
 patterns, plot the principal-component (EOF weighting) time series per simulation,
 and regress the leading PCs (>=95% variance) on each predictor set, saving the
@@ -30,7 +30,7 @@ from output import (
 )
 
 OUT_BASE = os.path.join(dl._REPO_ROOT, "data", "output", "eof")
-PREDICTAND_NAMES = ["tas", "precip"]
+PREDICTAND_NAMES = ["tas", "prc"]
 # Retain leading EOFs until cumulative variance reaches VARIANCE_THRESHOLD, but
 # never keep a mode explaining less than MIN_VARIANCE_FRACTION (drops the noise
 # tail; the more restrictive rule wins).
@@ -69,7 +69,7 @@ CAVEATS = """EOF / principal-component analysis outputs (additive to the direct 
       each weighting.
 - Two smoothing variants: 'annual' (interannual, this directory) and 'decadal10'
   (decadal10/ subdir) = 10-year block means per run/segment before pooling.
-- Annual tas is strongly low-rank (2 modes >=95%); annual precip is not
+- Annual tas is strongly low-rank (2 modes >=95%); annual prc is not
   (237 modes); decadal smoothing removes the high-frequency noise and lowers the
   retained-mode count (reported at run time).
 - p-values are nominal OLS; 'annual' is autocorrelation-optimistic, 'decadal10'

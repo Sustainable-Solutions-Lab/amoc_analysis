@@ -13,6 +13,7 @@ import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.lines import Line2D
+from scipy import stats
 
 SIGNIFICANCE_P = 0.05
 PROJECTION = ccrs.PlateCarree(central_longitude=0)
@@ -79,12 +80,16 @@ def plot_coefficient_map(coef, pvalue, title, units, ax, cmap="RdBu_r", bound=No
     return mesh
 
 
-def plot_set(fit, set_def, run_label, out_path, predictand):
+def plot_set(fit, set_def, run_label, out_path, predictand, centering=None):
     """Render all predictor coefficient maps for one regression set to ``out_path``.
 
     One panel per predictor (the intercept is omitted). Stippling marks p > 0.05.
     ``predictand`` is a ``regression.PREDICTANDS`` entry (label + units), used for
     titles and to form coefficient units ([predictand units] / [predictor units]).
+    ``centering`` is the ``tag -> (mean, units)`` dict from
+    ``regression.centering_means_for_set`` (empty/None for raw-predictor sets); when
+    present its means are annotated, since they are the offsets a user must subtract
+    before applying the centered cross-product terms.
     """
     from regression import PREDICTORS  # local import to avoid a cycle at import time
 
@@ -115,9 +120,14 @@ def plot_set(fit, set_def, run_label, out_path, predictand):
             cmap=cmap,
         )
     preds = ", ".join(PREDICTORS[p]["label"] for p in predictors)
+    centering_line = ""
+    if centering:
+        parts = ", ".join(f"{tag} = {mean:.4g} {units}" for tag, (mean, units) in centering.items())
+        centering_line = f"\ncentering means (subtract before applying centered terms): {parts}"
     fig.suptitle(
         f"Set {set_def['number']}: {plabel} ~ {preds}  |  {run_label}\n"
-        f"stippling: p > {SIGNIFICANCE_P} (nominal OLS; autocorrelation not corrected)",
+        f"stippling: p > {SIGNIFICANCE_P} (nominal OLS; autocorrelation not corrected)"
+        f"{centering_line}",
         fontsize=11,
     )
     fig.tight_layout(rect=(0, 0, 1, 0.97))
@@ -173,8 +183,8 @@ def plot_pc_timeseries(eof_ds, title, out_path, max_modes=4):
     """Time series of the EOF weightings (PCs) vs year, one panel per simulation.
 
     Each panel plots the leading ``max_modes`` principal components against that
-    run's own years; line breaks are inserted across year gaps (e.g. the
-    historical-ssp585 1950–2000 gap) so segments aren't joined across them.
+    run's own years; line breaks are inserted across any year gaps (a
+    discontinuity left by dropping NaN years) so segments aren't joined across them.
     """
     pcs = eof_ds["pcs"]
     years = eof_ds["sample"].values
@@ -324,7 +334,7 @@ def plot_scalar_timeseries(annual, decadal, title, out_path):
     own axis, so real magnitudes and any collapse stay visible). Annual values are
     thin lines; decadal block means are overlaid as marked lines (centered on the
     same annual baseline, so they sit on the annual curves). Lines break across
-    genuine year gaps (e.g. the historical-ssp585 1950–2000 gap). ``annual`` and
+    genuine year gaps (a discontinuity left by dropping NaN years). ``annual`` and
     ``decadal`` are pooled predictor Datasets (variables on ``sample`` with a
     ``run`` coord) from ``regression.build_pooled`` (block=None and block=10).
     """
@@ -409,5 +419,181 @@ def plot_predictor_scatter(predictors, out_path):
         fontsize=12,
     )
     fig.tight_layout(rect=(0, 0, 1, 0.97))
+    fig.savefig(out_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_itcz_timeseries(annual, decadal, title, out_path):
+    """Per-simulation time series of the ITCZ latitude (``precip_max_lat``).
+
+    One panel per simulation; annual values as a thin line and decadal block means
+    overlaid as a marked line. Lines break across genuine year gaps (a
+    discontinuity left by dropping NaN years). ``annual``/``decadal`` are the pooled response
+    DataArrays (on ``sample`` with a ``run`` coord) from
+    ``regression.build_pooled_scalar`` (block=None and block=10).
+    """
+    runs = list(dict.fromkeys(annual["run"].values))
+    fig, axes = plt.subplots(len(runs), 1, figsize=(11, 2.6 * len(runs)), squeeze=False)
+    for ax, run in zip(axes[:, 0], runs):
+        for da, style in [(annual, dict(lw=0.9, alpha=0.65)),
+                          (decadal, dict(lw=1.8, marker="o", ms=3))]:
+            m = da["run"].values == run
+            yr = da["sample"].values[m].astype(float)
+            order = np.argsort(yr)
+            yr = yr[order]
+            d = np.diff(yr)
+            thresh = 1.5 * np.median(d) if d.size else np.inf  # break only real gaps
+            gaps = np.where(d > thresh)[0] + 1
+            yr_b = np.insert(yr, gaps, np.nan)
+            v = da.values[m][order]
+            ax.plot(yr_b, np.insert(v, gaps, np.nan), color="C2", **style)
+        ax.axhline(0, color="k", lw=0.5)
+        ax.set_title(run, fontsize=10)
+        ax.set_ylabel("ITCZ lat (°N)")
+        ax.grid(alpha=0.3)
+    axes[-1, 0].set_xlabel("year")
+    handles = [
+        Line2D([], [], color="C2", lw=0.9, label="annual"),
+        Line2D([], [], color="C2", lw=1.8, marker="o", ms=3, label="decadal mean"),
+    ]
+    axes[0, 0].legend(handles=handles, fontsize=8, ncol=2, loc="best")
+    fig.suptitle(title, fontsize=12)
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    fig.savefig(out_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_itcz_predicted_vs_observed(observed, run_of, panels, title, out_path):
+    """Predicted vs observed ITCZ latitude for one or more multi-predictor fits.
+
+    One subplot per entry of ``panels`` (each a dict with ``label``, ``predicted``
+    -- the fitted values on ``sample`` -- and ``r2``). Points are colored by
+    simulation; the dashed 1:1 line and R² / n are drawn on shared, equal-aspect
+    axes so departures from the 1:1 line read directly as prediction error.
+    ``observed`` is the response array and ``run_of`` the per-sample run labels.
+    """
+    runs = list(dict.fromkeys(run_of))
+    colors = plt.cm.tab10(np.arange(len(runs)))
+    fig, axes = plt.subplots(1, len(panels), figsize=(4.8 * len(panels), 4.8),
+                             squeeze=False)
+    for ax, panel in zip(axes[0], panels):
+        pred = panel["predicted"]
+        lo = float(min(observed.min(), pred.min()))
+        hi = float(max(observed.max(), pred.max()))
+        pad = 0.05 * (hi - lo)
+        lim = (lo - pad, hi + pad)
+        for color, run in zip(colors, runs):
+            m = run_of == run
+            ax.scatter(observed[m], pred[m], s=12, color=color, alpha=0.7,
+                       edgecolors="none", label=run)
+        ax.plot(lim, lim, color="k", lw=1.0, ls="--")
+        ax.set_xlim(lim)
+        ax.set_ylim(lim)
+        ax.set_aspect("equal")
+        ax.set_xlabel("observed ITCZ lat (°N)")
+        ax.set_ylabel("predicted ITCZ lat (°N)")
+        ax.set_title(f"{panel['label']}\nR² = {panel['r2']:.2f}, n = {observed.size}",
+                     fontsize=9)
+        ax.grid(alpha=0.3)
+    axes[0, 0].legend(fontsize=8, markerscale=1.6, title="simulation")
+    fig.suptitle(title, fontsize=12)
+    fig.tight_layout(rect=(0, 0, 1, 0.94))
+    fig.savefig(out_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_itcz_coefficients(panels, title, out_path):
+    """Partial-slope bar charts (coef ± SE) for one or more multi-predictor fits.
+
+    One subplot per entry of ``panels`` (each a dict with ``label`` and equal-length
+    ``names`` / ``coef`` / ``se`` / ``pvalue`` lists, intercept excluded). Bars are
+    the partial slopes with ±SE error bars, blue for positive and red for negative,
+    hatched where not significant at p < 0.05. Note the slopes carry mixed units
+    (° lat per K, per Sv, or per K·Sv for the interaction), so compare sign and
+    significance rather than bar heights across different predictors.
+    """
+    fig, axes = plt.subplots(1, len(panels), figsize=(4.2 * len(panels), 4.4),
+                             squeeze=False)
+    for ax, panel in zip(axes[0], panels):
+        x = np.arange(len(panel["names"]))
+        coef = np.asarray(panel["coef"])
+        se = np.asarray(panel["se"])
+        sig = np.asarray(panel["pvalue"]) < SIGNIFICANCE_P
+        ax.bar(x, coef, yerr=se, capsize=4,
+               color=["C0" if c >= 0 else "C3" for c in coef],
+               hatch=["" if s else "//" for s in sig],
+               edgecolor="k", linewidth=0.6)
+        ax.axhline(0, color="k", lw=0.6)
+        ax.set_xticks(x)
+        ax.set_xticklabels(panel["names"], rotation=30, ha="right", fontsize=8)
+        ax.set_ylabel("partial slope (° lat / predictor unit)")
+        ax.set_title(panel["label"], fontsize=9)
+        ax.grid(axis="y", alpha=0.3)
+    handles = [
+        Line2D([], [], marker="s", ls="", color="C0", label="positive"),
+        Line2D([], [], marker="s", ls="", color="C3", label="negative"),
+        Line2D([], [], marker="s", ls="", color="0.8", mec="k", label="hatched: p≥0.05"),
+    ]
+    axes[0, 0].legend(handles=handles, fontsize=7, loc="best")
+    fig.suptitle(title, fontsize=12)
+    fig.tight_layout(rect=(0, 0, 1, 0.92))
+    fig.savefig(out_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_itcz_scatter(predictors, response, fits, single_vars, title, out_path):
+    """ITCZ latitude vs each single predictor: scatter, OLS line, 95% CI band.
+
+    One panel per variable in ``single_vars`` (the single-predictor sets: Tglob,
+    ΔT_NS, AMOC). Points are colored by simulation. The pooled simple-OLS line is
+    drawn with a shaded 95% mean-response confidence band, and the slope ± SE, R²
+    and p-value (from the corresponding ``fits[var]`` Dataset, i.e.
+    ``regression.fit_scalar_ols`` on that single predictor) are annotated.
+    ``predictors`` and ``response`` are the pooled Datasets/DataArray on ``sample``.
+    """
+    runs = list(dict.fromkeys(predictors["run"].values))
+    colors = plt.cm.tab10(np.arange(len(runs)))
+    run_of = predictors["run"].values
+    y = response.values
+
+    fig, axes = plt.subplots(1, len(single_vars), figsize=(5.2 * len(single_vars), 4.6),
+                             squeeze=False)
+    for ax, var in zip(axes[0], single_vars):
+        x = predictors[var].values
+        for color, run in zip(colors, runs):
+            m = run_of == run
+            ax.scatter(x[m], y[m], s=12, color=color, alpha=0.7,
+                       edgecolors="none", label=run)
+
+        fit = fits[var]
+        b0 = float(fit["coef"].sel(param="intercept"))
+        b1 = float(fit["coef"].sel(param=var))
+        slope_se = float(fit["se"].sel(param=var))
+        pval = float(fit["pvalue"].sel(param=var))
+        n, df = fit.attrs["nobs"], fit.attrs["df"]
+
+        # 95% mean-response band: ŷ ± t* · s · sqrt(1/n + (x-x̄)²/Sxx).
+        resid = y - (b0 + b1 * x)
+        sigma2 = (resid**2).sum() / df
+        xbar = x.mean()
+        sxx = ((x - xbar) ** 2).sum()
+        tcrit = stats.t.ppf(0.975, df)
+        xx = np.linspace(x.min(), x.max(), 200)
+        yhat = b0 + b1 * xx
+        band = tcrit * np.sqrt(sigma2 * (1.0 / n + (xx - xbar) ** 2 / sxx))
+        ax.plot(xx, yhat, color="k", lw=1.6)
+        ax.fill_between(xx, yhat - band, yhat + band, color="k", alpha=0.15, lw=0)
+
+        ax.set_xlabel(SCALAR_AXIS_LABELS[var])
+        ax.set_ylabel("ITCZ lat (°N)")
+        ax.set_title(
+            f"slope = {b1:+.3g} ± {slope_se:.2g} °/[{SCALAR_AXIS_LABELS[var].split('(')[-1].rstrip(') ')}]\n"
+            f"R² = {fit.attrs['r2']:.2f}, p = {pval:.1e}, n = {n}",
+            fontsize=9,
+        )
+        ax.grid(alpha=0.3)
+    axes[0, 0].legend(fontsize=8, markerscale=1.6, title="simulation")
+    fig.suptitle(title, fontsize=12)
+    fig.tight_layout(rect=(0, 0, 1, 0.95))
     fig.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close(fig)

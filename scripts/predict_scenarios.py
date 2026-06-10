@@ -2,7 +2,7 @@
 
 Uses the decadal (10-year block-mean) pooled regressions in
 ``data/output/regression/<predictand>/decadal10/`` to map the predicted change in
-the gridded tas and precip fields for two end-of-century SSP5-8.5 conditions,
+the gridded tas and prc (convective precip) fields for two end-of-century SSP5-8.5 conditions,
 relative to the piControl baseline, plus their difference (which isolates the
 AMOC-slowdown fingerprint). Done for set 5 (Tglob + AMOC) and set 10
 (Tglob + AMOC + Tglob*AMOC interaction).
@@ -159,7 +159,7 @@ def main():
     mT = float(pooled["tas_global_mean"].mean())
     mA = float(pooled["amoc_strength"].mean())
     print(f"decadal pooled means: Tglob={mT:.3f} K, AMOC={mA:.3f} Sv  (set-10 centering)")
-    for name in ("tas", "precip"):
+    for name in ("tas", "prc"):
         run_for_predictand(name, mT, mA)
 
 

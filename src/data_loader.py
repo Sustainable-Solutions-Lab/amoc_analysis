@@ -1,21 +1,26 @@
 """Load CESM2 monthly NetCDF output and produce normalized annual means.
 
-Two conventions coexist in ``data/input/``:
+The precipitation analysis uses **convective precipitation (``prc``) uniformly for
+every run** (total ``pr`` was never available for all runs). Two file conventions
+coexist in ``data/input/``:
 
 - **CMORized** files (``historical``, ``ssp585``, ``abrupt-4xCO2``) store
-  temperature as ``tas`` (K) and precipitation as ``pr`` (total precipitation,
-  kg m-2 s-1).
+  temperature as ``tas`` (K); convective precipitation is the CMIP ``prc`` variable
+  (kg m-2 s-1). The ssp585 future is split across two files. Its ensemble member is
+  ``r4i1p1f1`` while the historical segment is ``r1i1p1f1`` -- but this r1->r4 splice
+  is identical for ``prc``, ``tas``, and AMOC (the ``tas`` ssp585 file is labeled
+  r1 but its ``variant_label`` is r4), so the predictand and the predictors stay
+  mutually consistent within each period.
 - **Raw CAM-history** files (``piControl``, ``u03-hos``) store temperature as
-  ``TREFHT`` (K) and *convective* precipitation (liq + ice), alongside a full
-  set of CAM metadata variables. The precipitation variable is labeled
-  ``units = "m/s"``, but its values are actually a water mass flux in
-  kg m-2 s-1 (they match the total-``pr`` magnitude; true m s-1 precipitation
-  would be ~1000x smaller), so the label is treated as a mislabel and the data
-  is used as-is without scaling.
+  ``TREFHT`` (K) and *convective* precipitation (liq + ice) under the variable name
+  ``pr``, alongside a full set of CAM metadata variables. That precipitation is
+  labeled ``units = "m/s"``, but its values are actually a water mass flux in
+  kg m-2 s-1 (they match the CMIP precip magnitude; true m s-1 precipitation would
+  be ~1000x smaller), so the label is treated as a mislabel and the data is used
+  as-is without scaling.
 
 This module reconciles both into a common convention following CMIP variable
-names: ``tas`` (K), ``pr`` (total precipitation, kg m-2 s-1), and ``prc``
-(convective precipitation, kg m-2 s-1, from the raw files). It computes
+names: ``tas`` (K) and ``prc`` (convective precipitation, kg m-2 s-1). It computes
 month-length-weighted annual means (correct for the CESM2 ``noleap`` calendar)
 and attaches provenance attributes documenting the original source and units.
 """
@@ -26,11 +31,11 @@ import os
 import numpy as np
 import xarray as xr
 
-# Per-variable output metadata. CMIP convention: ``pr`` is total precipitation,
-# ``prc`` is convective precipitation; both are water mass fluxes (kg m-2 s-1).
+# Per-variable output metadata. CMIP convention: ``prc`` is convective
+# precipitation, a water mass flux (kg m-2 s-1). Only ``tas`` and ``prc`` are
+# produced (total ``pr`` was never available for all runs).
 VAR_METADATA = {
     "tas": {"units": "K", "long_name": "Near-Surface Air Temperature"},
-    "pr": {"units": "kg m-2 s-1", "long_name": "Precipitation", "precip_kind": "total"},
     "prc": {
         "units": "kg m-2 s-1",
         "long_name": "Convective Precipitation",
@@ -67,16 +72,23 @@ INPUT_MANIFEST = [
         ],
     },
     {
-        "var": "pr",
+        "var": "prc",
         "experiment": "historical-ssp585",
+        # Convective precip: ssp585 is split into two files, and its realization
+        # (r4i1p1f1) differs from the historical/tas realization (r1i1p1f1) -- the
+        # only prc ssp585 available; the member mismatch is documented as a caveat.
         "segments": [
             {
-                "file": "pr_Amon_CESM2_historical_r1i1p1f1_gn_18500115-20141215.nc",
-                "source_variable": "pr",
+                "file": "prc_Amon_CESM2_historical_r1i1p1f1_gn_185001-201412.nc",
+                "source_variable": "prc",
             },
             {
-                "file": "pr_Amon_CESM2_ssp585_r1i1p1f1_gn_20150115-21001215.nc",
-                "source_variable": "pr",
+                "file": "prc_Amon_CESM2_ssp585_r4i1p1f1_gn_201501-206412.nc",
+                "source_variable": "prc",
+            },
+            {
+                "file": "prc_Amon_CESM2_ssp585_r4i1p1f1_gn_206501-210012.nc",
+                "source_variable": "prc",
             },
         ],
     },
@@ -91,12 +103,12 @@ INPUT_MANIFEST = [
         ],
     },
     {
-        "var": "pr",
+        "var": "prc",
         "experiment": "abrupt-4xCO2",
         "segments": [
             {
-                "file": "pr_Amon_CESM2_abrupt-4xCO2-001.nc",
-                "source_variable": "pr",
+                "file": "prc_Amon_CESM2_abrupt-4xCO2_r1i1p1f1_gn_000101--099912.nc",
+                "source_variable": "prc",
             }
         ],
     },
@@ -178,9 +190,9 @@ def block_average_on_years(obj, block):
 
     Works on a Dataset or DataArray carrying a ``year`` dimension. Years are first
     split into contiguous segments (a segment break is any year-to-year jump > 1,
-    e.g. the historical-ssp585 1950-2000 gap), then within each segment grouped
-    into consecutive blocks of ``block`` years and averaged. A block never spans a
-    segment break, and trailing partial blocks (fewer than ``block`` years) are
+    e.g. a discontinuity left by dropping NaN years), then within each segment
+    grouped into consecutive blocks of ``block`` years and averaged. A block never
+    spans a segment break, and trailing partial blocks (fewer than ``block`` years) are
     dropped. The returned object's ``year`` coordinate is each block's mean year
     (the block midpoint).
 
@@ -236,9 +248,9 @@ def _load_segment(segment, target_var):
         "annual_mean_method": ANNUAL_MEAN_METHOD,
     }
     # The raw CAM-history precip is labeled "m/s" but its values are a water mass
-    # flux in kg m-2 s-1 (matching total pr magnitude); record the mislabel and
-    # leave the data unscaled rather than applying a bogus density factor.
-    if target_var in ("pr", "prc") and original_units == "m/s":
+    # flux in kg m-2 s-1 (matching the CMIP precip magnitude); record the mislabel
+    # and leave the data unscaled rather than applying a bogus density factor.
+    if target_var == "prc" and original_units == "m/s":
         annual.attrs["units_note"] = (
             "source units attribute was 'm/s' but values are kg m-2 s-1 "
             "(water mass flux); used as-is without conversion"
@@ -302,18 +314,43 @@ def interhemispheric_difference(da):
     return nh_mean - sh_mean
 
 
-def amoc_strength_on_years(segments, years):
-    """Place AMOC strength (Sv) from ``CESM2_AMOC_experiments.nc`` onto ``years``.
+def tropical_precip_centroid_lat(da, band):
+    """Precipitation-mass centroid latitude (deg N) -- an ITCZ-position index.
 
-    ``segments`` is a list of ``{"variable", "year_start"}``: each source
-    variable's values are written starting at ``year_start`` on the target axis
-    (the AMOC series are the first N years of their run). Years not covered by
-    any segment are left missing (NaN).
+    The area- and precipitation-weighted mean latitude of the zonal-mean
+    precipitation within ``|lat| <= band``::
+
+        phi = sum_i lat_i * P_i * a_i / sum_i P_i * a_i,
+
+    with ``P_i`` the zonal mean (mean over ``lon``) and ``a_i`` the exact band area
+    weight (``latitude_band_weights``, so each latitude contributes in proportion to
+    its band area). Unlike the bare argmax of ``P``, this integrates over *both*
+    branches of a double ITCZ, so the index moves continuously as the branches'
+    relative strength shifts rather than jumping when the taller branch flips
+    hemispheres. ``da`` has dims ``(year, lat, lon)``; returns ``DataArray(year)``
+    named ``precip_centroid_lat`` (degrees_north).
     """
-    ds = xr.open_dataset(os.path.join(INPUT_DIR, AMOC_FILE))
+    zm = da.mean("lon")
+    w = latitude_band_weights(da["lat"])
+    weighted = (zm * w).where(np.abs(da["lat"]) <= band)  # mass per latitude in band
+    centroid = (weighted * da["lat"]).sum("lat") / weighted.sum("lat")
+    return centroid.rename("precip_centroid_lat")
+
+
+def amoc_strength_on_years(segments, years):
+    """Place AMOC strength (Sv) onto ``years``.
+
+    ``segments`` is a list of ``{"variable", "year_start"[, "file"]}``: each source
+    variable's values are written starting at ``year_start`` on the target axis,
+    read from ``file`` (default ``CESM2_AMOC_experiments.nc``, whose series are the
+    first N years of their run). The historical-ssp585 run instead draws a single
+    gap-free 1850-2100 series from ``AMOC_4models_hist_ssp585.nc``. Years not
+    covered by any segment are left missing (NaN).
+    """
     years = np.asarray(years)
     values = np.full(years.size, np.nan)
     for seg in segments:
+        ds = xr.open_dataset(os.path.join(INPUT_DIR, seg.get("file", AMOC_FILE)))
         v = ds[seg["variable"]].values
         start = int(np.nonzero(years == seg["year_start"])[0][0])
         values[start : start + v.size] = v
@@ -323,43 +360,59 @@ def amoc_strength_on_years(segments, years):
 
 
 # One scalar file per simulation, sharing each run's gridded year axis. AMOC
-# values 1..N map to the run's first N years (NaN-padded); historical-ssp585
-# splices the two historical windows with a 1950-2000 gap. The greenland-hosing
-# run has no gridded tas, so it carries AMOC only on a bare 1..100 index.
+# values 1..N map to the run's first N years (NaN-padded), except historical-ssp585,
+# which carries a gap-free 1850-2100 AMOC series from AMOC_4models_hist_ssp585.nc.
+# The greenland-hosing run has no gridded tas, so it carries AMOC only on a bare
+# 1..100 index. ``precip_file``/``precip_var`` give the gridded annual precipitation
+# source for the ITCZ centroid diagnostic (``precip_centroid_lat_*``) -- convective
+# ``prc`` for every run (None where no gridded precip exists).
 SCALAR_SIMULATIONS = [
     {
         "experiment": "historical-ssp585",
         "tas_file": "tas_annual_CESM2_historical-ssp585.nc",
+        "precip_file": "prc_annual_CESM2_historical-ssp585.nc",
+        "precip_var": "prc",
         "amoc_segments": [
-            {"variable": "historical_early_1850-1949", "year_start": 1850},
-            {"variable": "historical+ssp585_late_2001-2100", "year_start": 2001},
+            {
+                "file": "AMOC_4models_hist_ssp585.nc",
+                "variable": "CESM2",
+                "year_start": 1850,
+            },
         ],
         "amoc_note": (
-            "1850-1949 from historical_early; 2001-2100 from "
-            "historical+ssp585_late; 1950-2000 missing (NaN), to be filled."
+            "1850-2100 continuous from AMOC_4models_hist_ssp585.nc (CESM2); "
+            "the former 1950-2000 gap is filled."
         ),
     },
     {
         "experiment": "abrupt-4xCO2",
         "tas_file": "tas_annual_CESM2_abrupt-4xCO2.nc",
+        "precip_file": "prc_annual_CESM2_abrupt-4xCO2.nc",
+        "precip_var": "prc",
         "amoc_segments": [{"variable": "abrupt_4xCO2", "year_start": 1}],
         "amoc_note": "AMOC first 100 years mapped to run years 1-100; NaN after.",
     },
     {
         "experiment": "piControl",
         "tas_file": "tas_annual_CESM2_piControl.nc",
+        "precip_file": "prc_annual_CESM2_piControl.nc",
+        "precip_var": "prc",
         "amoc_segments": [{"variable": "piControl", "year_start": 700}],
         "amoc_note": "AMOC first 100 years mapped to run years 700-799.",
     },
     {
         "experiment": "u03-hos",
         "tas_file": "tas_annual_CESM2_u03-hos.nc",
+        "precip_file": "prc_annual_CESM2_u03-hos.nc",
+        "precip_var": "prc",
         "amoc_segments": [{"variable": "hosing_0.3Sv_uniform", "year_start": 1850}],
         "amoc_note": "AMOC first 100 years mapped to run years 1850-1949; NaN after.",
     },
     {
         "experiment": "hosing-0.1Sv-greenland",
         "tas_file": None,
+        "precip_file": None,
+        "precip_var": None,
         "amoc_segments": [{"variable": "hosing_0.1Sv_greenland", "year_start": 1}],
         "amoc_note": "No gridded tas; AMOC on year index 1-100 (not calendar years).",
     },

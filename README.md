@@ -59,17 +59,24 @@ exact names (the filenames are hard-coded in `src/data_loader.py`):
 
 ```
 CESM2_AMOC_experiments.nc
+AMOC_4models_hist_ssp585.nc
 tas_Amon_CESM2_historical_r1i1p1f1_gn_18500115-20141215.nc
 tas_Amon_CESM2_ssp585_r1i1p1f1_gn_20150115-21001215.nc
 tas_Amon_CESM2_abrupt-4xCO2-002.nc
 tas_Amon_CESM2_piControl_070001-079912.nc
 tas_Amon_CESM2_u03-hos_1850001-202112.nc
-pr_Amon_CESM2_historical_r1i1p1f1_gn_18500115-20141215.nc
-pr_Amon_CESM2_ssp585_r1i1p1f1_gn_20150115-21001215.nc
-pr_Amon_CESM2_abrupt-4xCO2-001.nc
+prc_Amon_CESM2_historical_r1i1p1f1_gn_185001-201412.nc
+prc_Amon_CESM2_ssp585_r4i1p1f1_gn_201501-206412.nc
+prc_Amon_CESM2_ssp585_r4i1p1f1_gn_206501-210012.nc
+prc_Amon_CESM2_abrupt-4xCO2_r1i1p1f1_gn_000101--099912.nc
 pr_Amon_CESM2_piControl_070001-079912.nc
 pr_Amon_CESM2_u03-hos_1850001-202112.nc
 ```
+
+The precipitation analysis uses **convective precipitation (`prc`) only** (total
+`pr` was never available for all runs). The `historical`/`ssp585`/`abrupt-4xCO2`
+runs supply `prc` directly (ssp585 split across two files); `piControl`/`u03-hos`
+supply convective precip under the variable name `pr` in their raw files.
 
 > **TODO (data source):** record where these files come from (archive/DOI/URL or
 > internal path) so the inputs themselves are reproducible — this is the one
@@ -90,16 +97,24 @@ separate variable:
 | `historical_early_1850-1949` | historical, early window |
 | `historical+ssp585_late_2001-2100` | historical+SSP5-8.5, late window |
 
+`AMOC_4models_hist_ssp585.nc` — AMOC strength (**Sv**) on a `year` axis 1850–2100
+(251 values, no gaps) for four CMIP6 models, one variable each (`CESM2`,
+`HadGEM3-GC31-MM`, `CanESM5`, `IPSL-CM6A-LR`). The `CESM2` series is the
+**gap-free historical+ssp585 AMOC** used for the `historical-ssp585` run; it
+matches the two `CESM2_AMOC_experiments.nc` historical windows to ~5e-5 in their
+overlap and fills the former 1950–2000 gap, so regressions can use the entire
+historical period. The other runs still draw AMOC from `CESM2_AMOC_experiments.nc`.
+
 ### Gridded monthly fields
 
 Near-surface air temperature and precipitation on the CESM2 native grid
 (`lat` = 192 × `lon` = 288, nominal 1°), monthly (`Amon`). Two variables across
 five experiments:
 
-| Experiment (file stem) | Time range | n (months) | `tas`/`pr` provenance |
+| Experiment (file stem) | Time range | n (months) | `tas`/`prc` provenance |
 | --- | --- | --- | --- |
 | `historical_r1i1p1f1_gn` | 1850-01 → 2014-12 | 1980 | CMORized |
-| `ssp585_r1i1p1f1_gn`¹ | 2015-01 → 2100-12 | 1032 | CMORized |
+| `ssp585_r4i1p1f1_gn`¹ | 2015-01 → 2100-12 | 1032 | CMORized (split into two files) |
 | `abrupt-4xCO2`² | 0001-01 → 0999-12 | 11988 | CMORized |
 | `piControl_070001-079912` | 0700 → 0800 | 1200 | raw CESM2 (CAM history) |
 | `u03-hos_1850001-202112`³ | 1850-02 → 2022-01 | 2064 | raw CESM2 (CAM history) |
@@ -108,19 +123,21 @@ five experiments:
 
 - **Two distinct data conventions.** The `historical`, `ssp585`, and
   `abrupt-4xCO2` files are CMORized: temperature is `tas` (Near-Surface Air
-  Temperature, **K**) and precipitation is `pr` (total Precipitation,
-  **kg m⁻² s⁻¹**). The `piControl` and `u03-hos` files are raw CESM2 CAM history
-  output: temperature is `TREFHT` (Reference height temperature, **K**) and
-  precipitation is `PRECC`-style **Convective** precipitation rate (liq + ice),
-  in **m s⁻¹** — *not* total precipitation. These raw files also carry the full
-  CAM metadata set (hybrid-sigma coefficients `hyam`/`hybm`, `co2vmr`,
-  `sol_tsi`, etc.). Loading code must map variable names and reconcile
-  units/quantities before comparing across experiments.
-- ¹ The `ssp585` filenames say `r1i1p1f1`, but the file attribute
-  `variant_label` is **`r4i1p1f1`** — the actual ensemble member is r4, not r1.
+  Temperature, **K**) and convective precipitation is `prc` (**kg m⁻² s⁻¹**). The
+  `piControl` and `u03-hos` files are raw CESM2 CAM history output: temperature is
+  `TREFHT` (Reference height temperature, **K**) and `PRECC`-style **convective**
+  precipitation rate (liq + ice) under the variable name `pr`, labeled **m s⁻¹**
+  but actually a kg m⁻² s⁻¹ water mass flux (see below). These raw files also carry
+  the full CAM metadata set (hybrid-sigma coefficients `hyam`/`hybm`, `co2vmr`,
+  `sol_tsi`, etc.). Loading code maps variable names and reconciles units before
+  comparing across experiments. The analysis uses convective `prc` for every run.
+- ¹ The `ssp585` future is split into two files (2015–2064, 2065–2100) and is
+  ensemble member **`r4i1p1f1`** (the `prc` filenames say so; the `tas` ssp585
+  filename says r1 but its `variant_label` is also r4). So `tas` and `prc` share
+  the same r1-historical → r4-ssp585 splice.
 - ² `abrupt-4xCO2` is supplied as a single 999-year monthly run (~2.5 GB per
-  variable); the `pr` and `tas` files carry different file suffixes
-  (`-001` vs `-002`).
+  variable); the `prc` (`r1i1p1f1`) and `tas` (`-002`) files carry different file
+  suffixes but both span years 1–999.
 - ³ `u03-hos` is the freshwater-hosing experiment; its time axis spans
   1850–2022 on a `noleap` calendar.
 
@@ -128,35 +145,34 @@ five experiments:
 
 `scripts/make_annual_means.py` precomputes month-length-weighted annual means
 (correct for the `noleap` calendar) of the gridded fields, following CMIP
-variable names: `tas` (K), `pr` (**total** precipitation, kg m⁻² s⁻¹), and
-`prc` (**convective** precipitation, kg m⁻² s⁻¹). The raw CAM files contribute
-`TREFHT` (renamed `tas`) and convective precipitation as `prc` — these distinct
-names keep convective output from being mistaken for total `pr`. Each variable
-carries provenance attributes (`source_file`, `source_variable`,
-`original_units`, `annual_mean_method`, `precip_kind`). Output (8 files):
+variable names: `tas` (K) and `prc` (**convective** precipitation, kg m⁻² s⁻¹).
+The raw CAM files contribute `TREFHT` (renamed `tas`) and their convective precip
+(source variable `pr`, renamed `prc`). Each variable carries provenance attributes
+(`source_file`, `source_variable`, `original_units`, `annual_mean_method`,
+`precip_kind`). Output (8 files):
 
 | File | Coverage |
 | --- | --- |
-| `{tas,pr}_annual_CESM2_historical-ssp585.nc` | 1850–2100 (251 yr, spliced) |
-| `{tas,pr}_annual_CESM2_abrupt-4xCO2.nc` | years 1–999 |
+| `{tas,prc}_annual_CESM2_historical-ssp585.nc` | 1850–2100 (251 yr, spliced) |
+| `{tas,prc}_annual_CESM2_abrupt-4xCO2.nc` | years 1–999 |
 | `tas_annual_CESM2_piControl.nc`, `prc_annual_CESM2_piControl.nc` | years 700–799 |
 | `tas_annual_CESM2_u03-hos.nc`, `prc_annual_CESM2_u03-hos.nc` | 1850–2021 |
 
-**Two precipitation caveats:**
+**Precipitation caveats:**
 
-- **Total vs convective.** Only `historical`, `ssp585`, and `abrupt-4xCO2`
-  provide total precipitation (`pr`). `piControl` and `u03-hos` provide
-  convective precipitation only (`prc`) — a different quantity; do not regress
-  `prc` against `pr` as if they were the same field.
-- **Mislabeled source units.** The raw `prc` source carries `units = "m/s"`,
-  but its values are a water mass flux already in kg m⁻² s⁻¹ (they match the
-  total-`pr` magnitude; true m s⁻¹ precipitation would be ~1000× smaller). The
-  data is used as-is without scaling; outputs record this in a `units_note`
-  attribute.
+- **Convective only.** The analysis uses convective precipitation (`prc`) for
+  every run — total `pr` was never available for all runs. Do not interpret `prc`
+  as total precipitation.
+- **Mislabeled source units.** The raw `piControl`/`u03-hos` `prc` source carries
+  `units = "m/s"`, but its values are a water mass flux already in kg m⁻² s⁻¹
+  (they match the CMIP precip magnitude; true m s⁻¹ precipitation would be ~1000×
+  smaller). The data is used as-is without scaling; outputs record this in a
+  `units_note` attribute.
 
 The combined `historical-ssp585` files treat historical (1850–2014) and
-ssp585 (2015–2100) as one continuous simulation; note the ensemble members
-differ (historical r1i1p1f1, ssp585 r4i1p1f1).
+ssp585 (2015–2100) as one continuous simulation; the ensemble members differ
+(historical r1i1p1f1, ssp585 r4i1p1f1), but identically for `tas` and `prc`, so
+the predictand and the temperature-derived predictors share the same splice.
 
 ### Scalar time series (`data/processed/`, git-ignored)
 
@@ -164,21 +180,34 @@ differ (historical r1i1p1f1, ssp585 r4i1p1f1).
 per simulation, each holding these one-value-per-year series on the simulation's
 gridded year axis:
 
-- `amoc_strength` (Sv) — from `CESM2_AMOC_experiments.nc`
+- `amoc_strength` (Sv) — from `CESM2_AMOC_experiments.nc`, except
+  `historical-ssp585`, which uses the gap-free 1850–2100 `CESM2` series in
+  `AMOC_4models_hist_ssp585.nc`
 - `tas_global_mean` (K) — area-weighted global annual-mean temperature
 - `tas_interhemispheric_diff` (K) — area-weighted NH-mean minus SH-mean
+- `precip_centroid_lat_20`, `precip_centroid_lat_30` (°N) — the **precipitation-mass
+  centroid latitude**, an **ITCZ-position index**, over 20°S–20°N and 30°S–30°N. It
+  is the area- and precip-weighted mean latitude of the zonal-mean precipitation,
+  `Σ φ·P·a / Σ P·a` (reusing the exact band area weights). Unlike a bare argmax,
+  the centroid integrates over *both* branches of a double ITCZ, so it varies
+  continuously instead of jumping between branches — important because CESM2 has a
+  pronounced southern (double-ITCZ) precip maximum. Present only for runs with a
+  gridded precip file (all but greenland-hosing); the source is convective `prc`
+  for every run.
 
 | File | year axis | notes |
 | --- | --- | --- |
-| `…historical-ssp585.nc` | 1850–2100 | AMOC spliced (1850–1949, 2001–2100); **1950–2000 missing** |
+| `…historical-ssp585.nc` | 1850–2100 | AMOC complete 1850–2100 (from `AMOC_4models_hist_ssp585.nc`) |
 | `…abrupt-4xCO2.nc` | 1–999 | AMOC years 1–100; NaN after |
 | `…piControl.nc` | 700–799 | AMOC years 700–799 |
 | `…u03-hos.nc` | 1850–2021 | AMOC years 1850–1949; NaN after |
 | `…hosing-0.1Sv-greenland.nc` | 1–100 | AMOC only — no gridded `tas` for this run |
 
 The AMOC series in `CESM2_AMOC_experiments.nc` are the **first 100 years** of
-each run, placed at the start of that run's year axis (the historical case
-splices its two windows). Temperature scalars are derived from the annual `tas`
+each run, placed at the start of that run's year axis. The `historical-ssp585`
+run instead uses the continuous 1850–2100 `CESM2` series from
+`AMOC_4models_hist_ssp585.nc` (no 1950–2000 gap), so regressions can use the full
+historical period. Temperature scalars are derived from the annual `tas`
 files — area weighting commutes with the month-length-weighted annual mean, so
 this is exact (verified to 0 K against recomputation from monthly data). Area
 weighting uses exact zonal-band weights, `sin(edge_N) − sin(edge_S)`, which
@@ -192,9 +221,8 @@ missing dependent/predictor value (see `CLAUDE.md`).
 `scripts/run_regressions.py` regresses a gridded annual-mean **predictand** (one
 time series per grid cell) on the scalar indices `tas_global_mean` (Tglob),
 `tas_interhemispheric_diff` (dT_NS), and `amoc_strength` (AMOC). It runs for two
-predictands: **`tas`** (temperature, K) and **`precip`** (the pooled-prototype
-field — total `pr` for historical-ssp585/abrupt-4xCO2, convective `prc` for
-piControl/u03-hos; see precip caveats above).
+predictands: **`tas`** (temperature, K) and **`prc`** (convective precipitation,
+kg m⁻² s⁻¹, for every run; see precip caveats above).
 
 The years of all four simulations (historical-ssp585, abrupt-4xCO2, piControl,
 u03-hos; greenland-hosing is excluded — no gridded field) are **pooled into one
@@ -202,7 +230,8 @@ fit per grid cell** with a single common intercept and no per-run fixed effects.
 Pooling exploits the runs' disagreement about how the indices co-vary (piControl
 ~uncorrelated; u03-hos flips the sign of dT_NS), sharply reducing the within-run
 collinearity. All sets use one common sample: the years where every predictor is
-present (= AMOC-present years), **500 rows** (historical-ssp585 200, others 100).
+present (= AMOC-present years), **551 rows** (historical-ssp585 251 — full 1850–2100
+now that AMOC is gap-free — and 100 each from the other three runs).
 
 Ten predictor sets are produced (one multi-panel coefficient map per set, per
 predictand):
@@ -233,7 +262,7 @@ predictand):
   identical to the uncentered form.
 
 Coefficient maps (`src/output.py`) use a diverging colormap with symmetric bounds
-(white = 0; `RdBu_r` for tas with warm = red, `RdBu` for precip with wet = blue)
+(white = 0; `RdBu_r` for tas with warm = red, `RdBu` for prc with wet = blue)
 and **stipple cells where p > 0.05**. Each set writes a PDF and a NetCDF of the
 coefficient/SE/t/p/R² fields to `data/output/regression/<predictand>/`, plus a
 caveats `README.txt`. `scripts/plot_predictor_scatter.py` writes
@@ -261,11 +290,13 @@ segment, to both the predictors and the predictand** inside
 `regression.build_pooled(block=10)` *before* pooling — so the identical filter
 acts on dependent and independent variables, and every downstream step (the
 orthogonalized and quadratic columns, the grid OLS, the EOFs) inherits it. Blocks
-never span a run boundary or the historical-ssp585 1950–2000 gap (that run's two
-100-yr segments each give 10 blocks). Each block's timestamp is its midpoint year.
+never span a run boundary or a within-run year gap; with the gap-free
+historical-ssp585 AMOC, that run is now one contiguous 1850–2100 segment (25
+ten-year blocks; a trailing partial block is dropped). Each block's timestamp is
+its midpoint year.
 
 Block averaging is a **decimation**, not a running mean: it collapses each decade
-to one ~independent sample (pooled **n ≈ 50**: historical-ssp585 20, others 10),
+to one ~independent sample (pooled **n ≈ 55**: historical-ssp585 25, others 10),
 so the nominal OLS degrees of freedom become honest — this resolves the
 annual-variant autocorrelation caveat rather than deferring it, at the cost of
 sample size (df ≈ 40 still supports the 9-term set 9). Quadratic and product terms
@@ -296,10 +327,10 @@ Method (`src/eof.py`):
   individually explains **< 1 %** of variance (the per-mode floor drops the long
   low-variance noise tail). Counts are reported per field/variant. `tas` is highly
   low-rank (**2 modes**, EOF1 a global warming pattern, EOF2 an
-  AMOC/interhemispheric dipole — the 95 % rule binds). For `precip` the 1 % floor
-  binds: decadal precip keeps **5 modes** (89 % cumulative; mode 6 is 0.99 %),
-  versus the 16 modes the bare 95 % rule would retain. `eof_patterns.pdf` maps up
-  to the leading 9 modes.
+  AMOC/interhemispheric dipole — the 95 % rule binds). For `prc` the 1 % floor
+  binds (the convective-precip field is not low-rank); the retained-mode count is
+  reported per variant at run time. `eof_patterns.pdf` maps up to the leading 9
+  modes.
 - **PC regression:** the retained PCs are regressed on the same predictor sets
   1–10 (including the orthogonalized, quadratic, and interaction columns) with an
   intercept; the PC-space coefficients (coef/SE/t/p) are saved.
@@ -309,8 +340,8 @@ Outputs per predictand and variant (`data/output/eof/<predictand>/` and
 
 - `eof_patterns.pdf` — the leading EOF spatial patterns + a variance scree.
 - `pc_timeseries.pdf` — the **EOF weightings (PCs) over time**, one panel per
-  simulation; lines break across genuine year gaps (e.g. the historical-ssp585
-  1950–2000 gap) but stay connected across regular decadal steps.
+  simulation; lines break across genuine year gaps but stay connected across
+  regular decadal steps (the historical-ssp585 AMOC is now gap-free).
 - `pc_regression_set{N}_*.nc` — OLS of the PCs on each predictor set (PC-space
   coef/SE/t/p and per-mode R²), plus a caveats `README.txt`.
 
@@ -361,7 +392,7 @@ hosing run (a within-experiment correlation, not a transferable causal sensitivi
 The predicted change between two conditions is `coef · (predictor(X) − predictor(R))`
 (the intercept cancels; set 10 evaluates its centered columns and interaction with the
 decadal pooled means). Each predictand is a **three-page** PDF
-(`data/output/scenarios/predicted_change_{tas,precip}.pdf`), rows = set 5 and set 10:
+(`data/output/scenarios/predicted_change_{tas,prc}.pdf`), rows = set 5 and set 10:
 page 1 (2×3) is the change relative to piControl — **SSP585 − piControl**,
 **adj1 − piControl**, **adj2 − piControl**; page 2 (2×2) is the AMOC-slowdown effect —
 **SSP585 − adj1**, **SSP585 − adj2**; page 3 (2×2) expresses that effect as the
@@ -371,10 +402,46 @@ page 1 (2×3) is the change relative to piControl — **SSP585 − piControl**,
 `SSP585 − adj2` is pure spatial redistribution (global mean exactly 0). Comparing the
 sign of the AMOC effect (page 2) against the CO₂-only change (`adjN − piControl`, page 1)
 shows where the slowdown adds to (exacerbates) or opposes (ameliorates) the CO₂ response
-— e.g. for tas the subpolar North Atlantic cold blob, for precip an ITCZ-shift dipole.
+— e.g. for tas the subpolar North Atlantic cold blob, for prc an ITCZ-shift dipole.
 On page 3 the ratio explodes where the denominator crosses zero, so every page-3 panel
 uses a common fixed **±100 %** color scale (values beyond saturate) to keep panels
 directly comparable.
+
+### ITCZ-position regressions (scalar response)
+
+`scripts/run_itcz_regressions.py` regresses the **scalar** ITCZ index — the
+precipitation-mass centroid latitude, for two tropical bands
+(`precip_centroid_lat_20`, `precip_centroid_lat_30`) — on the same scalar indices
+(Tglob, dT_NS, AMOC), using the same ten predictor sets and the same `annual` /
+`decadal10` pooling as the gridded regressions. Because the response is a single
+series per simulation-year (not a gridded field or PCs), it uses
+`regression.build_pooled_scalar` and `regression.fit_scalar_ols` (a 1-D OLS with
+the same normal-equations math as the gridded fit, validated against `statsmodels`,
+plus 95 % confidence intervals). The pooled common sample is the same AMOC-complete
+500 years (50 decadal blocks). Outputs go to
+`data/output/itcz/{band20,band30}/[decadal10/]`:
+
+- `coef_table_{annual,decadal10}.csv` — coef, SE, t, p, 95 % CI per parameter,
+  with R² and n, for every set (the scalar analog of the gridded coefficient maps).
+- `itcz_fit_set{1..10}_{labels}.nc` — the per-set fit Datasets.
+- `itcz_timeseries.pdf` — the centroid latitude per simulation, annual + decadal
+  overlay (`scripts/plot_itcz_regressions.py`; band level only).
+- `itcz_scatter.pdf` — ITCZ latitude vs each single predictor with the OLS line,
+  95 % CI band, and slope ± SE / R² / p annotated.
+- `itcz_predicted_vs_observed.pdf` — predicted vs observed centroid latitude for
+  the multi-predictor sets 5, 6, 10, with the 1:1 line and R² (shows how well the
+  *joint* regression reproduces the ITCZ across runs).
+- `itcz_coefficients.pdf` — partial-slope (coef ± SE) bar charts for sets 5, 6, 10,
+  blue/red by sign and hatched where not significant.
+
+The three regression figures (`itcz_scatter`, `itcz_predicted_vs_observed`,
+`itcz_coefficients`) are written for both the annual sample (in the band directory)
+and the decadal10 sample (in the `decadal10/` subdir).
+
+The interhemispheric temperature difference is the strongest single predictor of
+the centroid (annual R² ≈ 0.72): the ITCZ shifts toward the warmer hemisphere. AMOC
+adds substantial skill (single-predictor R² ≈ 0.4–0.5), and the three-predictor set
+explains the bulk of the variance (annual R² ≈ 0.82–0.89, decadal ≈ 0.96–0.97).
 
 ## Reproducing the results
 
@@ -382,13 +449,15 @@ After placing the input files in `data/input/` (see [Data](#data)) and installin
 dependencies, run, in order:
 
 ```bash
-python scripts/make_annual_means.py        # data/processed/{tas,pr,prc}_annual_*.nc
+python scripts/make_annual_means.py        # data/processed/{tas,prc}_annual_*.nc
 python scripts/make_scalar_timeseries.py   # data/processed/scalars_annual_*.nc
-python scripts/run_regressions.py          # data/output/regression/{tas,precip}/[decadal10/]coef_set*.{pdf,nc}
+python scripts/run_regressions.py          # data/output/regression/{tas,prc}/[decadal10/]coef_set*.{pdf,nc}
 python scripts/plot_predictor_scatter.py   # data/output/regression/predictor_scatter.pdf
 python scripts/plot_scalar_timeseries.py   # data/output/regression/predictor_timeseries.pdf
-python scripts/run_eof_regressions.py      # data/output/eof/{tas,precip}/[decadal10/]{eof_patterns,pc_timeseries}.pdf, pc_regression_set*.nc
-python scripts/predict_scenarios.py        # data/output/scenarios/predicted_change_{tas,precip}.pdf
+python scripts/run_eof_regressions.py      # data/output/eof/{tas,prc}/[decadal10/]{eof_patterns,pc_timeseries}.pdf, pc_regression_set*.nc
+python scripts/predict_scenarios.py        # data/output/scenarios/predicted_change_{tas,prc}.pdf
+python scripts/run_itcz_regressions.py     # data/output/itcz/{band20,band30}/[decadal10/]coef_table_*.csv, itcz_fit_set*.nc
+python scripts/plot_itcz_regressions.py    # data/output/itcz/{band20,band30}/{itcz_timeseries,itcz_scatter}.pdf
 ```
 
 `run_regressions.py` and `run_eof_regressions.py` each produce both the **annual**
@@ -399,13 +468,15 @@ land under `data/` (git-ignored) and are fully regenerable from the inputs.
 
 Utility: `python scripts/split_pdf_into_pages.py <file.pdf>` splits a multi-page
 figure PDF into one file per page (`<file>_page01.pdf`, `_page02.pdf`, … in the
-same directory) for pasting individual panels into LaTeX.
+same directory) for pasting individual panels into LaTeX. Add `--png` (optionally
+`--dpi N`, default 300) to rasterize the pages to high-resolution PNGs instead —
+much lighter for a LaTeX engine to load than the vector PDFs.
 
 ## Status
 
 Preprocessing (`scripts/make_annual_means.py`,
 `scripts/make_scalar_timeseries.py`), pooled per-grid-point regression analysis
-(`scripts/run_regressions.py`, sets 1–10 for tas and precip), predictor scatter
+(`scripts/run_regressions.py`, sets 1–10 for tas and prc), predictor scatter
 and time series (`scripts/plot_predictor_scatter.py`,
 `scripts/plot_scalar_timeseries.py`), and the additive EOF / principal-component
 path (`scripts/run_eof_regressions.py`, built on `src/eof.py`), and the decadal

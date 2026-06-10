@@ -6,6 +6,9 @@ holding, on the simulation's gridded year axis:
 - ``amoc_strength`` (Sv) — from ``CESM2_AMOC_experiments.nc``
 - ``tas_global_mean`` (K) — area-weighted global annual-mean temperature
 - ``tas_interhemispheric_diff`` (K) — area-weighted NH-mean minus SH-mean
+- ``precip_centroid_lat_20``, ``precip_centroid_lat_30`` (deg N) —
+  precipitation-mass centroid latitude (ITCZ proxy) over 20°S–20°N and 30°S–30°N,
+  where a gridded precip file exists for the run
 
 Temperature scalars are derived from the precomputed annual ``tas`` files (area
 weighting commutes with the month-length-weighted annual mean), so this does not
@@ -37,6 +40,17 @@ TAS_METADATA = {
     },
 }
 
+# Precipitation-mass centroid of the zonal-mean precip, over two tropical bands.
+# The centroid integrates over both branches of a double ITCZ, so it varies
+# continuously (unlike the argmax, which jumps between the two branches).
+ITCZ_BANDS = [20.0, 30.0]
+PRECIP_NOTE = (
+    "ITCZ proxy = area- and precip-weighted mean latitude (precipitation-mass "
+    "centroid) of the zonal-mean precip within the band. Precip source is "
+    "convective prc for all runs; for historical-ssp585 the r1->r4 member splice "
+    "(historical r1i1p1f1, ssp585 r4i1p1f1) is identical for prc, tas, and AMOC."
+)
+
 
 def main():
     os.makedirs(dl.PROCESSED_DIR, exist_ok=True)
@@ -67,11 +81,35 @@ def main():
             ].sizes["time"]
             years = range(1, n + 1)
 
+        # ITCZ centroid(s) from the gridded annual precip file (where available;
+        # shares the run's year axis, so it slots into the same Dataset).
+        if sim["precip_file"] is not None:
+            precip = xr.open_dataset(
+                os.path.join(dl.PROCESSED_DIR, sim["precip_file"])
+            )[sim["precip_var"]]
+            for band in ITCZ_BANDS:
+                name = f"precip_centroid_lat_{int(band)}"
+                cen = dl.tropical_precip_centroid_lat(precip, band).rename(name)
+                cen.attrs = {
+                    "units": "degrees_north",
+                    "long_name": (
+                        f"Precipitation-mass centroid latitude (ITCZ proxy), "
+                        f"{int(band)}S-{int(band)}N"
+                    ),
+                    "band_deg": band,
+                    "note": PRECIP_NOTE,
+                    "source_file": sim["precip_file"],
+                    "source_variable": sim["precip_var"],
+                }
+                data_vars[name] = cen
+
         amoc = dl.amoc_strength_on_years(sim["amoc_segments"], list(years))
         amoc.attrs = {
             "units": "Sv",
             "long_name": "AMOC strength",
-            "source_file": dl.AMOC_FILE,
+            "source_file": "; ".join(
+                sorted({seg.get("file", dl.AMOC_FILE) for seg in sim["amoc_segments"]})
+            ),
             "note": sim["amoc_note"],
         }
         data_vars["amoc_strength"] = amoc

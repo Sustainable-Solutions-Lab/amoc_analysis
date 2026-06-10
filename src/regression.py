@@ -69,9 +69,10 @@ ORTHOGONAL_COLUMNS = {
 }
 
 # Gridded predictands (response fields). Each maps every run to the processed
-# file and variable that supplies the field for that run. Precipitation mixes
-# total `pr` (historical-ssp585, abrupt-4xCO2) with convective `prc` (piControl,
-# u03-hos) — physically different quantities, pooled here only to prototype.
+# file and variable that supplies the field for that run. Precipitation is
+# convective `prc` uniformly for all runs. For historical-ssp585 the r1->r4
+# member splice (historical r1i1p1f1, ssp585 r4i1p1f1) is identical for `prc`,
+# `tas`, and AMOC, so predictand and predictors stay mutually consistent.
 PREDICTANDS = {
     "tas": {
         "label": "tas",
@@ -79,15 +80,12 @@ PREDICTANDS = {
         "cmap": "RdBu_r",  # warm (positive) = red
         "by_run": {r: {"file": f"tas_annual_CESM2_{r}.nc", "var": "tas"} for r in RUNS},
     },
-    "precip": {
-        "label": "precip",
+    "prc": {
+        "label": "prc",
         "units": "kg m-2 s-1",
         "cmap": "RdBu",  # wetter (positive) = blue, drier = red (precip convention)
         "by_run": {
-            "historical-ssp585": {"file": "pr_annual_CESM2_historical-ssp585.nc", "var": "pr"},
-            "abrupt-4xCO2": {"file": "pr_annual_CESM2_abrupt-4xCO2.nc", "var": "pr"},
-            "piControl": {"file": "prc_annual_CESM2_piControl.nc", "var": "prc"},
-            "u03-hos": {"file": "prc_annual_CESM2_u03-hos.nc", "var": "prc"},
+            r: {"file": f"prc_annual_CESM2_{r}.nc", "var": "prc"} for r in RUNS
         },
     },
 }
@@ -135,6 +133,17 @@ PREDICTOR_SETS = [
 
 # Union of all predictors used in any set; defines the common sample of years.
 PREDICTOR_UNION = ["tas_global_mean", "tas_interhemispheric_diff", "amoc_strength"]
+
+# Base predictors that the centered (``q_``) columns of sets 9-10 are demeaned by,
+# mapping the short tag used in column names to (raw predictor, units). The pooled
+# mean of each is the offset a downstream user must subtract before applying a
+# centered term -- it matters for the cross-product (interaction) coefficient,
+# whose marginal effect is read relative to the other variable's centering mean.
+CENTERED_BASES = {
+    "Tglob": ("tas_global_mean", "K"),
+    "AMOC": ("amoc_strength", "Sv"),
+    "dT_NS": ("tas_interhemispheric_diff", "K"),
+}
 
 
 def build_pooled(runs=RUNS, predictor_union=PREDICTOR_UNION, predictand=None, block=None):
@@ -186,6 +195,46 @@ def build_pooled(runs=RUNS, predictor_union=PREDICTOR_UNION, predictand=None, bl
     return predictors, response
 
 
+def build_pooled_scalar(
+    response_var, runs=RUNS, predictor_union=PREDICTOR_UNION, block=None
+):
+    """Pool a scalar response and the scalar predictors across runs onto one axis.
+
+    Like :func:`build_pooled`, but the response is a scalar series read from the
+    same ``scalars_annual_CESM2_{run}.nc`` file as the predictors (e.g.
+    ``precip_max_lat``, the ITCZ proxy). For each run, only years where every
+    predictor in ``predictor_union`` **and** ``response_var`` are present are kept
+    (complete-case deletion); the kept years are then concatenated across runs.
+    With ``block`` set, each run's predictors and response are block-averaged
+    before pooling (same operator on both). Returns ``(predictors, response)``
+    where both are on a ``sample`` dimension with a ``run`` coordinate.
+    """
+    pred_parts, resp_parts = [], []
+    for run in runs:
+        ds = xr.open_dataset(
+            os.path.join(dl.PROCESSED_DIR, f"scalars_annual_CESM2_{run}.nc")
+        )
+        scal = ds[predictor_union]
+        resp = ds[response_var]
+
+        valid = ds[predictor_union + [response_var]].to_dataframe().dropna().index
+        scal = scal.sel(year=valid)
+        resp = resp.sel(year=valid)
+
+        if block is not None:
+            scal = dl.block_average_on_years(scal, block)
+            resp = dl.block_average_on_years(resp, block)
+
+        n_run = scal.sizes["year"]
+        run_label = xr.DataArray(np.full(n_run, run), dims="year")
+        pred_parts.append(scal.assign_coords(run=("year", run_label.data)))
+        resp_parts.append(resp.assign_coords(run=("year", run_label.data)))
+
+    predictors = xr.concat(pred_parts, dim="year").rename(year="sample")
+    response = xr.concat(resp_parts, dim="year").rename(year="sample")
+    return predictors, response
+
+
 def _residual(y, given):
     """Residual of 1-D ``y`` after OLS on ``given`` (list of 1-D arrays) + intercept."""
     X = np.column_stack([np.ones(y.size)] + list(given))
@@ -218,14 +267,19 @@ def add_quadratic_columns(predictors):
     values (Tglob ~ 287 K) the linear and squared terms are ~collinear and the
     design is singular; centering drops cond(XᵀX) from ~1e20 to ~1e5.
     """
-    c = {
+    raw = {
         "Tglob": predictors["tas_global_mean"].values,
         "AMOC": predictors["amoc_strength"].values,
         "dT_NS": predictors["tas_interhemispheric_diff"].values,
     }
-    c = {k: v - v.mean() for k, v in c.items()}
+    means = {k: float(v.mean()) for k, v in raw.items()}
+    c = {k: raw[k] - means[k] for k in raw}
 
     out = predictors.copy()
+    # Record the centering means so the netcdf and figures can report the offset a
+    # downstream user must subtract before applying the centered (cross-product) terms.
+    for tag, m in means.items():
+        out.attrs[f"centering_mean_{tag}"] = m
     out["q_Tglob"] = ("sample", c["Tglob"])
     out["q_AMOC"] = ("sample", c["AMOC"])
     out["q_dT_NS"] = ("sample", c["dT_NS"])
@@ -236,6 +290,22 @@ def add_quadratic_columns(predictors):
     out["q_Tglob.dT_NS"] = ("sample", c["Tglob"] * c["dT_NS"])
     out["q_AMOC.dT_NS"] = ("sample", c["AMOC"] * c["dT_NS"])
     return out
+
+
+def centering_means_for_set(predictors, names):
+    """Centering means referenced by a set's centered (``q_``) predictors.
+
+    ``predictors`` is the augmented Dataset from :func:`add_quadratic_columns`
+    (which stored ``centering_mean_<tag>`` attrs); ``names`` is a set's predictor
+    list. Returns an ordered dict ``tag -> (mean, units)`` for each base predictor
+    whose tag appears in any centered column of the set, and an empty dict for sets
+    built from raw predictors only.
+    """
+    return {
+        tag: (predictors.attrs[f"centering_mean_{tag}"], units)
+        for tag, (_, units) in CENTERED_BASES.items()
+        if any(n.startswith("q_") and tag in n for n in names)
+    }
 
 
 def fit_grid_ols(predictors, tas):
@@ -282,6 +352,64 @@ def fit_grid_ols(predictors, tas):
         coords=coords,
         attrs={"nobs": n, "df": df},
     )
+
+
+def fit_scalar_ols(predictors, y, alpha=0.05):
+    """Closed-form OLS of a scalar response ``y`` on ``predictors`` + intercept.
+
+    The scalar analog of :func:`fit_grid_ols` (same normal-equations math, one
+    response series instead of one per grid cell), used for the ITCZ-latitude
+    regressions. Returns an xarray Dataset with per-parameter ``coef``, ``se``,
+    ``tstat``, ``pvalue`` (dims ``param``) and the ``(1-alpha)`` ``conf_int``
+    (dims ``param, bound``), plus scalar ``r2``, ``nobs`` and ``df`` in attrs.
+    ``param`` is ``["intercept", *predictor names]``. Confidence intervals are
+    included here (unlike the gridded fit) for the scatter-with-fit plots.
+    """
+    names = list(predictors.data_vars)
+    columns = np.column_stack([predictors[v].values for v in names])
+    X = np.column_stack([np.ones(columns.shape[0]), columns])  # (n, k)
+    z = np.asarray(y.values, dtype=float)
+    n, k = X.shape
+    df = n - k
+
+    XtX_inv = np.linalg.inv(X.T @ X)
+    beta = XtX_inv @ (X.T @ z)
+    resid = z - X @ beta
+    sigma2 = (resid**2).sum() / df
+    se = np.sqrt(np.diag(XtX_inv) * sigma2)
+    tstat = beta / se
+    pvalue = 2.0 * stats.t.sf(np.abs(tstat), df)
+    tcrit = stats.t.ppf(1.0 - alpha / 2.0, df)
+    conf_int = np.column_stack([beta - tcrit * se, beta + tcrit * se])
+
+    r2 = 1.0 - (resid**2).sum() / ((z - z.mean()) ** 2).sum()
+
+    param = ["intercept"] + names
+    return xr.Dataset(
+        {
+            "coef": ("param", beta),
+            "se": ("param", se),
+            "tstat": ("param", tstat),
+            "pvalue": ("param", pvalue),
+            "conf_int": (("param", "bound"), conf_int),
+        },
+        coords={"param": param, "bound": ["lo", "hi"]},
+        attrs={"nobs": n, "df": df, "r2": float(r2)},
+    )
+
+
+def predict_scalar_ols(fit, predictors):
+    """Fitted values ``X @ beta`` for a :func:`fit_scalar_ols` result.
+
+    ``fit`` carries ``coef`` indexed by ``param = ["intercept", *names]``;
+    ``predictors`` must contain those named columns on the ``sample`` axis. Returns
+    a 1-D numpy array of predicted responses (one per sample).
+    """
+    names = [p for p in fit["param"].values if p != "intercept"]
+    pred = np.full(predictors.sizes["sample"], float(fit["coef"].sel(param="intercept")))
+    for nm in names:
+        pred = pred + float(fit["coef"].sel(param=nm)) * predictors[nm].values
+    return pred
 
 
 def variance_inflation_factors(predictors):
