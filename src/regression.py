@@ -241,6 +241,55 @@ def build_pooled(runs=None, predictor_union=PREDICTOR_UNION, predictand=None, bl
     return predictors, response
 
 
+def build_pooled_monthly(
+    predictand, month, runs=None, predictor_union=PREDICTOR_UNION, block=None
+):
+    """Pool one calendar month's gridded predictand and the annual scalar predictors.
+
+    The monthly analog of :func:`build_pooled`: for each run the response is the
+    ``month``-slice of ``{var}_monthly_CESM2_{run}.nc`` (dims ``year, lat, lon``),
+    regressed against the same *annual* scalar predictors (Tglob, AMOC, dT_NS) from
+    ``scalars_annual_CESM2_{run}.nc`` -- so calendar month ``month`` is related to the
+    annual indices of the same year. Years with any predictor missing are dropped;
+    with ``block`` set, each run's predictors and that month's response are
+    block-averaged over ``block`` years before pooling (= the 10-year average of that
+    calendar month). ``runs`` defaults to the predictand's ``by_run`` keys.
+    """
+    if runs is None:
+        runs = list(predictand["by_run"])
+
+    pred_parts, resp_parts = [], []
+    for run in runs:
+        scal = xr.open_dataset(
+            os.path.join(dl.PROCESSED_DIR, f"scalars_annual_CESM2_{run}.nc")
+        )[predictor_union]
+        var = predictand["by_run"][run]["var"]
+        resp = (
+            xr.open_dataset(
+                os.path.join(dl.PROCESSED_DIR, f"{var}_monthly_CESM2_{run}.nc")
+            )[var]
+            .sel(month=month)
+            .rename(predictand["label"])
+        )
+
+        valid = scal.to_dataframe().dropna().index  # years with all predictors
+        scal = scal.sel(year=valid)
+        resp = resp.sel(year=valid)
+
+        if block is not None:
+            scal = dl.block_average_on_years(scal, block)
+            resp = dl.block_average_on_years(resp, block)
+
+        n_run = scal.sizes["year"]
+        run_label = xr.DataArray(np.full(n_run, run), dims="year")
+        pred_parts.append(scal.assign_coords(run=("year", run_label.data)))
+        resp_parts.append(resp.assign_coords(run=("year", run_label.data)))
+
+    predictors = xr.concat(pred_parts, dim="year").rename(year="sample")
+    response = xr.concat(resp_parts, dim="year").rename(year="sample")
+    return predictors, response
+
+
 def build_pooled_scalar(
     response_var, runs=RUNS, predictor_union=PREDICTOR_UNION, block=None
 ):

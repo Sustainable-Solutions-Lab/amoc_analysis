@@ -12,8 +12,12 @@ import cartopy.crs as ccrs
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.lines import Line2D
 from scipy import stats
+
+MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 SIGNIFICANCE_P = 0.05
 PROJECTION = ccrs.PlateCarree(central_longitude=0)
@@ -45,20 +49,22 @@ def _save_figure(fig, out_path=None, pdf=None):
     plt.close(fig)
 
 
-def plot_coefficient_map(coef, pvalue, title, units, ax, cmap="RdBu_r", bound=None):
+def plot_coefficient_map(coef, pvalue, title, units, ax, cmap="RdBu_r", bound=None,
+                         rasterized=False):
     """Draw one coefficient map on a Cartopy ``ax``: filled field + p>0.05 stippling.
 
     ``coef`` and ``pvalue`` are 2-D (lat, lon) DataArrays. ``cmap`` is a diverging
     colormap (white = 0); use ``RdBu_r`` for temperature (warm = red) and ``RdBu``
     for precipitation (wet = blue). The symmetric color scale is fixed to ±``bound``
-    if given, else the 99th percentile of |coef| (values beyond saturate). Returns
-    the mappable for colorbar creation.
+    if given, else the 99th percentile of |coef| (values beyond saturate). With
+    ``rasterized`` the filled field (the heavy artist) is embedded as raster while
+    axes/text stay vector -- keeps many-panel PDFs small. Returns the mappable.
     """
     lon, lat = coef["lon"], coef["lat"]
     b = bound if bound is not None else _symmetric_bound(coef.values)
     mesh = ax.pcolormesh(
         lon, lat, coef, cmap=cmap, vmin=-b, vmax=b,
-        shading="auto", transform=DATA_CRS,
+        shading="auto", transform=DATA_CRS, rasterized=rasterized,
     )
     # Stipple where NOT significant (p > 0.05).
     ax.contourf(
@@ -133,6 +139,55 @@ def plot_set(fit, set_def, run_label, out_path, predictand, centering=None):
     fig.tight_layout(rect=(0, 0, 1, 0.97))
     fig.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
+
+
+def plot_set_monthly(fit, set_def, run_label, out_path, predictand, centering=None,
+                     rasterized=True):
+    """Render a monthly regression set to one PDF: a 3x4 twelve-month grid per predictor.
+
+    ``fit`` is the stacked monthly result with ``coef``/``pvalue`` on dims
+    ``(month, param, lat, lon)`` and a 1..12 ``month`` coordinate. One PDF page per
+    predictor (intercept omitted); each page shows that predictor's coefficient map
+    for all 12 calendar months on a shared symmetric color scale. ``centering`` is the
+    optional ``tag -> (mean, units)`` dict (set-10 cross-product offsets, month-mean)
+    annotated on the page. ``rasterized`` embeds the map fields as raster (small PDF).
+    """
+    from regression import PREDICTORS  # local import to avoid an import cycle
+
+    plabel, punits = predictand["label"], predictand["units"]
+    cmap = predictand.get("cmap", "RdBu_r")
+    centering_line = ""
+    if centering:
+        parts = ", ".join(f"{tag} = {mean:.4g} {units}" for tag, (mean, units) in centering.items())
+        centering_line = f"\ncentering means (month-mean; per-month values in the NetCDF): {parts}"
+
+    with PdfPages(out_path) as pdf:
+        for name in set_def["predictors"]:
+            meta = PREDICTORS[name]
+            coef_p = fit["coef"].sel(param=name)
+            pval_p = fit["pvalue"].sel(param=name)
+            bound = _symmetric_bound(coef_p.values)  # shared scale across all 12 months
+            fig, axes = plt.subplots(
+                3, 4, figsize=(22, 12), squeeze=False,
+                subplot_kw={"projection": PROJECTION},
+            )
+            for ax, month in zip(axes.flat, fit["month"].values):
+                plot_coefficient_map(
+                    coef_p.sel(month=month), pval_p.sel(month=month),
+                    title=MONTH_NAMES[int(month) - 1],
+                    units=f"({punits}) / {meta['units']}",
+                    ax=ax, cmap=cmap, bound=bound, rasterized=rasterized,
+                )
+            fig.suptitle(
+                f"Set {set_def['number']}: ∂{plabel}/∂{meta['label']} by calendar month "
+                f"|  {run_label}\n"
+                f"stippling: p > {SIGNIFICANCE_P} (nominal OLS; autocorrelation not "
+                f"corrected){centering_line}",
+                fontsize=12,
+            )
+            fig.tight_layout(rect=(0, 0, 1, 0.96))
+            pdf.savefig(fig, dpi=150, bbox_inches="tight")
+            plt.close(fig)
 
 
 def plot_eof_patterns(eof_ds, title, units, out_path, cmap="RdBu_r", max_patterns=9):

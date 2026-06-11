@@ -481,6 +481,11 @@ python scripts/run_eof_regressions.py      # data/output/eof/{tas,prc,pr}/[decad
 python scripts/predict_scenarios.py        # data/output/scenarios/predicted_change_{tas,prc,pr}.pdf
 python scripts/run_itcz_regressions.py     # data/output/itcz/{band20,band30}/[decadal10/]coef_table_*.csv, itcz_fit_set*.nc
 python scripts/plot_itcz_regressions.py    # data/output/itcz/{band20,band30}/{itcz_timeseries,itcz_scatter}.pdf
+
+# Monthly (per-calendar-month) analysis (optional; larger intermediate files):
+python scripts/make_monthly_means.py          # data/processed/{tas,prc,pr}_monthly_*.nc (year, month, lat, lon)
+python scripts/run_monthly_regressions.py     # data/output/regression_monthly/{tas,prc,pr}/[decadal10/]coef_set*.{pdf,nc}
+python scripts/predict_scenarios_monthly.py   # data/output/scenarios_monthly/predicted_change_{tas,prc,pr}.pdf
 ```
 
 The four set-fitting scripts (`run_regressions.py`, `run_eof_regressions.py`,
@@ -489,6 +494,19 @@ and **only the decadal10** (slow-timescale) smoothing; add `--all-sets` to produ
 ten sets and `--do-annuals` to also produce the annual (interannual) variant (the flags
 compose). `predict_scenarios.py` uses sets 5 & 10 from the decadal10 run, so it needs
 only the default run.
+
+**Monthly regressions.** `run_monthly_regressions.py` fits the same per-grid-point OLS
+**separately for each calendar month** (Jan…Dec): the response is that month's gridded
+tas/prc/pr field, the predictors are the *annual* indices (Tglob, AMOC, …) of the same
+year, and the decadal variant uses the 10-year mean of each calendar month. The 12 months
+are stacked into one PDF and one NetCDF per predictand×set — NetCDF dims
+`(month, param, lat, lon)` (plus `nobs(month)`, and `centering_mean_{Tglob,AMOC}(month)`
+for the cross-product set 10). It honors `--all-sets` / `--do-annuals` like the others,
+and writes **rasterized** map fields inside the PDF by default (small files); pass
+`--vector` for full vector PDFs. `predict_scenarios_monthly.py` then maps the predicted
+monthly-mean change for the SSP5-8.5 scenarios (12-month grids). Note the monthly
+intermediate files in `data/processed/` are ~12× the size of the annual ones (zlib
+compressed).
 
 Each script is a thin wrapper over `src/` and prints what it writes. All outputs
 land under `data/` (git-ignored) and are fully regenerable from the inputs.

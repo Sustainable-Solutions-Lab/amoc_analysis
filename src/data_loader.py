@@ -306,6 +306,69 @@ def load_and_normalize(entry):
     return combined
 
 
+def _load_segment_monthly(segment, target_var):
+    """Open one input file and pivot its monthly values to ``(year, month, lat,
+    lon)`` -- the raw monthly means (no averaging), named ``target_var`` with
+    provenance attributes. After ``_center_monthly_time`` every file is a clean
+    Jan->Dec, 12-months-per-year series, so the time axis unstacks to (year, month).
+    """
+    path = os.path.join(INPUT_DIR, segment["file"])
+    ds = xr.open_dataset(path)
+    ds = _center_monthly_time(ds)
+    da = ds[segment["source_variable"]]
+    original_units = da.attrs.get("units", "")
+
+    # The centered time axis is a clean Jan->Dec, 12-months-per-year, contiguous-year
+    # series (verified for both file conventions), so a direct reshape to
+    # (year, 12, lat, lon) is exact -- and far faster than xarray's dask ``unstack``.
+    years, months = da["time"].dt.year.values, da["time"].dt.month.values
+    uniq_years = np.unique(years)
+    n_year = uniq_years.size
+    expected = np.tile(np.arange(1, 13), n_year)
+    assert da.sizes["time"] == 12 * n_year and np.array_equal(months, expected), (
+        f"{segment['file']}: time axis is not a clean 12-month-per-year Jan->Dec series"
+    )
+    monthly = xr.DataArray(
+        da.values.reshape(n_year, 12, da.sizes["lat"], da.sizes["lon"]),
+        dims=("year", "month", "lat", "lon"),
+        coords={"year": uniq_years, "month": np.arange(1, 13),
+                "lat": da["lat"], "lon": da["lon"]},
+        name=target_var,
+    )
+
+    meta = VAR_METADATA[target_var]
+    monthly.attrs = {
+        **meta,
+        "source_file": segment["file"],
+        "source_variable": segment["source_variable"],
+        "original_units": original_units,
+        "monthly_method": "calendar-month means pivoted to (year, month)",
+    }
+    if target_var == "prc" and original_units == "m/s":
+        monthly.attrs["units_note"] = (
+            "source units attribute was 'm/s' but values are kg m-2 s-1 "
+            "(water mass flux); used as-is without conversion"
+        )
+    return monthly
+
+
+def load_and_normalize_monthly(entry):
+    """Build the ``(year, month, lat, lon)`` monthly DataArray for one manifest entry.
+
+    The monthly analog of :func:`load_and_normalize`: concatenates multi-segment
+    experiments along ``year`` (the calendar ``month`` axis is shared).
+    """
+    pieces = [_load_segment_monthly(seg, entry["var"]) for seg in entry["segments"]]
+    if len(pieces) == 1:
+        return pieces[0]
+    combined = xr.concat(pieces, dim="year")
+    combined.attrs = dict(pieces[0].attrs)
+    combined.attrs["source_file"] = "; ".join(
+        seg["file"] for seg in entry["segments"]
+    )
+    return combined
+
+
 # --- Scalar (one-value-per-year) diagnostics -------------------------------
 
 AMOC_FILE = "CESM2_AMOC_experiments.nc"
