@@ -88,6 +88,17 @@ PREDICTANDS = {
             r: {"file": f"prc_annual_CESM2_{r}.nc", "var": "prc"} for r in RUNS
         },
     },
+    # Total precipitation, available for only two runs (no piControl/u03-hos). A
+    # separate 2-run analysis; build_pooled derives its run set from these by_run keys.
+    "pr": {
+        "label": "pr",
+        "units": "kg m-2 s-1",
+        "cmap": "RdBu",
+        "by_run": {
+            "historical-ssp585": {"file": "pr_annual_CESM2_historical-ssp585.nc", "var": "pr"},
+            "abrupt-4xCO2": {"file": "pr_annual_CESM2_abrupt-4xCO2.nc", "var": "pr"},
+        },
+    },
 }
 
 # Predictor sets requested for analysis (column subsets of the predictor union).
@@ -131,6 +142,19 @@ PREDICTOR_SETS = [
     },
 ]
 
+# Sets run by default (set 5 = Tglob + AMOC; set 10 = Tglob*AMOC interaction); the
+# rest are produced only with the scripts' ``--all-sets`` flag.
+DEFAULT_SET_NUMBERS = [5, 10]
+
+
+def select_predictor_sets(all_sets=False):
+    """Predictor sets to run: all ten when ``all_sets`` else just the
+    ``DEFAULT_SET_NUMBERS`` subset, preserving ``PREDICTOR_SETS`` order."""
+    if all_sets:
+        return PREDICTOR_SETS
+    return [s for s in PREDICTOR_SETS if s["number"] in DEFAULT_SET_NUMBERS]
+
+
 # Union of all predictors used in any set; defines the common sample of years.
 PREDICTOR_UNION = ["tas_global_mean", "tas_interhemispheric_diff", "amoc_strength"]
 
@@ -146,13 +170,15 @@ CENTERED_BASES = {
 }
 
 
-def build_pooled(runs=RUNS, predictor_union=PREDICTOR_UNION, predictand=None, block=None):
+def build_pooled(runs=None, predictor_union=PREDICTOR_UNION, predictand=None, block=None):
     """Pool a gridded predictand and scalar predictors across runs onto one axis.
 
     For each run, keep only the years for which every predictor in
     ``predictor_union`` is present (intersection of non-NaN), then concatenate
     runs along a new ``sample`` dimension. ``predictand`` is an entry of
     ``PREDICTANDS`` (defaults to ``tas``) giving the per-run response file/var.
+    ``runs`` defaults to the predictand's own ``by_run`` keys, so a predictand
+    defined on a subset of runs (e.g. total ``pr``, only 2 runs) pools just those.
     Returns ``(predictors, response)`` where ``predictors`` is a Dataset of the
     scalar variables on ``sample`` and ``response`` has dims ``(sample, lat,
     lon)``. A ``run`` coordinate labels each sample's source simulation.
@@ -166,6 +192,8 @@ def build_pooled(runs=RUNS, predictor_union=PREDICTOR_UNION, predictand=None, bl
     """
     if predictand is None:
         predictand = PREDICTANDS["tas"]
+    if runs is None:
+        runs = list(predictand["by_run"])
 
     pred_parts, resp_parts = [], []
     for run in runs:

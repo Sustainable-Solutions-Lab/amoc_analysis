@@ -2,10 +2,16 @@
 
 Uses the decadal (10-year block-mean) pooled regressions in
 ``data/output/regression/<predictand>/decadal10/`` to map the predicted change in
-the gridded tas and prc (convective precip) fields for two end-of-century SSP5-8.5 conditions,
-relative to the piControl baseline, plus their difference (which isolates the
-AMOC-slowdown fingerprint). Done for set 5 (Tglob + AMOC) and set 10
-(Tglob + AMOC + Tglob*AMOC interaction).
+the gridded tas, prc (convective precip), and pr (total precip) fields for two
+end-of-century SSP5-8.5 conditions, relative to a preindustrial baseline, plus
+their difference (which isolates the AMOC-slowdown fingerprint). Done for set 5
+(Tglob + AMOC) and set 10 (Tglob + AMOC + Tglob*AMOC interaction).
+
+The baseline is the piControl run for tas/prc; the 2-run total-pr analysis has no
+piControl, so for pr the baseline is the historical-ssp585 1850-1900 mean (the
+Berkeley-Earth reference period; ~287.18 K / 17.84 Sv, ~the piControl state). The
+set-10 centering means (mT, mA) are read per predictand from the coef file's
+``centering_mean_*`` attributes, so the 2-run pr fit uses its own centering.
 
 Addresses: where does AMOC slowdown exacerbate vs. ameliorate the CO2-induced
 changes in surface temperature and precipitation? We compare the high-CO2 world
@@ -89,10 +95,27 @@ SET_FILES = {
 }
 
 
-def predicted_change(coef, set_num, condX, condR, mT, mA):
+def conditions_for(name):
+    """Scenario (Tglob, AMOC) states for a predictand. tas/prc use the piControl
+    baseline; the 2-run total-pr set has no piControl, so its baseline (the
+    ``piControl`` reference) is the historical-ssp585 1850-1900 mean."""
+    if name != "pr":
+        return COND
+    base = xr.open_dataset(
+        os.path.join(dl.PROCESSED_DIR, "scalars_annual_CESM2_historical-ssp585.nc")
+    ).sel(year=slice(1850, 1900))
+    cond = dict(COND)
+    cond["piControl"] = (
+        float(base["tas_global_mean"].mean()),
+        float(base["amoc_strength"].mean()),
+    )
+    return cond
+
+
+def predicted_change(coef, set_num, condX, condR, cond, mT, mA):
     """Predicted field change coef . (predictor(X) - predictor(R)) for a set."""
-    Tx, Ax = COND[condX]
-    Tr, Ar = COND[condR]
+    Tx, Ax = cond[condX]
+    Tr, Ar = cond[condR]
     if set_num == 5:  # raw predictors
         return (coef.sel(param="tas_global_mean") * (Tx - Tr)
                 + coef.sel(param="amoc_strength") * (Ax - Ar))
@@ -104,14 +127,23 @@ def predicted_change(coef, set_num, condX, condR, mT, mA):
             + coef.sel(param="q_Tglob.AMOC") * (qx[2] - qr[2]))
 
 
-def run_for_predictand(name, mT, mA):
+def run_for_predictand(name):
     predictand = reg.PREDICTANDS[name]
     units, cmap = predictand["units"], predictand.get("cmap", "RdBu_r")
     sets = sorted(SET_FILES)
-    coefs = {
-        s: xr.open_dataset(os.path.join(REG_BASE, name, "decadal10", SET_FILES[s]))["coef"]
+    dsets = {
+        s: xr.open_dataset(os.path.join(REG_BASE, name, "decadal10", SET_FILES[s]))
         for s in sets
     }
+    coefs = {s: dsets[s]["coef"] for s in sets}
+    # set-10 centering means as the fit used them (per predictand; the 2-run pr fit
+    # differs from the 4-run tas/prc fits), read from the coef file's attributes.
+    mT = float(dsets[10].attrs["centering_mean_Tglob_K"])
+    mA = float(dsets[10].attrs["centering_mean_AMOC_Sv"])
+    cond = conditions_for(name)
+    print(f"[{name}] set-10 centering: Tglob={mT:.3f} K, AMOC={mA:.3f} Sv; "
+          f"baseline (piControl ref) Tglob={cond['piControl'][0]:.3f} K, "
+          f"AMOC={cond['piControl'][1]:.3f} Sv")
 
     ratio_bound = RATIO_PCT_BOUND  # common ±100% scale on page 3 for all panels
     out_path = os.path.join(OUT_DIR, f"predicted_change_{name}.pdf")
@@ -127,15 +159,15 @@ def run_for_predictand(name, mT, mA):
                 for j, col in enumerate(cols):
                     if isinstance(col, tuple):  # ratio column: (title, num_idx, den_idx)
                         title, ni, di = col
-                        num = predicted_change(coef, set_num, SCENARIOS[ni][1], SCENARIOS[ni][2], mT, mA)
-                        den = predicted_change(coef, set_num, SCENARIOS[di][1], SCENARIOS[di][2], mT, mA)
+                        num = predicted_change(coef, set_num, SCENARIOS[ni][1], SCENARIOS[ni][2], cond, mT, mA)
+                        den = predicted_change(coef, set_num, SCENARIOS[di][1], SCENARIOS[di][2], cond, mT, mA)
                         with np.errstate(divide="ignore", invalid="ignore"):
                             ratio = 100.0 * num / den
                         change = ratio.where(np.isfinite(ratio))
                         u, bnd = "% of CO₂-only change", ratio_bound
                     else:  # absolute map of SCENARIOS[col]
                         title, condX, condR = SCENARIOS[col]
-                        change = predicted_change(coef, set_num, condX, condR, mT, mA)
+                        change = predicted_change(coef, set_num, condX, condR, cond, mT, mA)
                         u, bnd = f"Δ{name} ({units})", None
                     plot_coefficient_map(
                         change, xr.zeros_like(change),  # zeros -> no stippling
@@ -154,13 +186,8 @@ def run_for_predictand(name, mT, mA):
 
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
-    # Decadal pooled centering means (exactly those add_quadratic_columns used).
-    pooled, _ = reg.build_pooled(block=10)
-    mT = float(pooled["tas_global_mean"].mean())
-    mA = float(pooled["amoc_strength"].mean())
-    print(f"decadal pooled means: Tglob={mT:.3f} K, AMOC={mA:.3f} Sv  (set-10 centering)")
-    for name in ("tas", "prc"):
-        run_for_predictand(name, mT, mA)
+    for name in ("tas", "prc", "pr"):
+        run_for_predictand(name)
 
 
 if __name__ == "__main__":

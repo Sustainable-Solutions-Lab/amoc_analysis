@@ -1,17 +1,19 @@
 """EOF / principal-component analysis of pooled gridded fields (additive path).
 
-For each predictand (tas, prc): compute area-weighted covariance EOFs of the
+For each predictand (tas, prc, and 2-run total pr): compute area-weighted covariance EOFs of the
 grand-mean anomalies over the pooled AMOC-complete sample, plot the leading EOF
 patterns, plot the principal-component (EOF weighting) time series per simulation,
-and regress the leading PCs (>=95% variance) on each predictor set, saving the
-PC-space regression coefficients. Complements scripts/run_regressions.py.
+and regress the leading PCs (>=95% variance) on each selected predictor set, saving
+the PC-space regression coefficients. Complements scripts/run_regressions.py. By
+default only sets 5 & 10 are run; pass ``--all-sets`` to run all ten.
 
 Two smoothing variants are produced: 'annual' (interannual, <predictand>/) and
 'decadal10' (10-year block means, <predictand>/decadal10/).
 
-    python scripts/run_eof_regressions.py
+    python scripts/run_eof_regressions.py [--all-sets]
 """
 
+import argparse
 import os
 import sys
 
@@ -30,7 +32,7 @@ from output import (
 )
 
 OUT_BASE = os.path.join(dl._REPO_ROOT, "data", "output", "eof")
-PREDICTAND_NAMES = ["tas", "prc"]
+PREDICTAND_NAMES = ["tas", "prc", "pr"]
 # Retain leading EOFs until cumulative variance reaches VARIANCE_THRESHOLD, but
 # never keep a mode explaining less than MIN_VARIANCE_FRACTION (drops the noise
 # tail; the more restrictive rule wins).
@@ -64,7 +66,8 @@ CAVEATS = """EOF / principal-component analysis outputs (additive to the direct 
       panel title shows R^2 and % var. Standardizing makes bars comparable across
       modes (raw coefs scale with each PC's amplitude). t/p are scale-invariant
       (same as the per-set pc_regression_set{N}_*.nc files).
-    * pc_prediction.pdf -- one PAGE per set (6, 9, 10): fitted (X*beta) vs actual
+    * pc_prediction.pdf -- one PAGE per richer set among (6, 9, 10) that was fit
+      (only set 10 by default; all three with --all-sets): fitted (X*beta) vs actual
       PC over time per simulation, a direct view of how well the scalars predict
       each weighting.
 - Two smoothing variants: 'annual' (interannual, this directory) and 'decadal10'
@@ -77,7 +80,7 @@ CAVEATS = """EOF / principal-component analysis outputs (additive to the direct 
 """
 
 
-def run_for_predictand(name, smoothing):
+def run_for_predictand(name, smoothing, all_sets):
     predictand = reg.PREDICTANDS[name]
     tag = smoothing["tag"]
     out_dir = os.path.join(OUT_BASE, name, smoothing["subdir"])
@@ -112,7 +115,7 @@ def run_for_predictand(name, smoothing):
     # One multi-page PDF collects every set's regression figure (one page per set).
     reg_pdf = PdfPages(os.path.join(out_dir, "pc_regression.pdf")) if decadal else None
     fits = {}
-    for set_def in reg.PREDICTOR_SETS:
+    for set_def in reg.select_predictor_sets(all_sets):
         num = set_def["number"]
         names = set_def["predictors"]
         pc_fit = eof.fit_pcs(predictors[names], eof_ds["pcs"])
@@ -131,11 +134,12 @@ def run_for_predictand(name, smoothing):
 
     # Direct "predict the weightings" view for the richer sets (full 3-index,
     # quadratic, and Tglob×AMOC interaction): fitted vs actual PC over time, one
-    # page per set, decadal only.
+    # page per set, decadal only. Restricted to the sets actually fit (so the
+    # default sets-5-&-10 run renders only set 10 here, --all-sets renders 6, 9, 10).
     if decadal:
         reg_pdf.close()
         with PdfPages(os.path.join(out_dir, "pc_prediction.pdf")) as pred_pdf:
-            for num in (6, 9, 10):
+            for num in (n for n in (6, 9, 10) if n in fits):
                 pc_fit, names = fits[num]
                 plot_pc_prediction(
                     eof_ds, pc_fit, predictors[names],
@@ -148,9 +152,15 @@ def run_for_predictand(name, smoothing):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--all-sets", action="store_true",
+        help="regress on all ten predictor sets (default: only sets 5 & 10)",
+    )
+    args = parser.parse_args()
     for name in PREDICTAND_NAMES:
         for smoothing in SMOOTHINGS:
-            run_for_predictand(name, smoothing)
+            run_for_predictand(name, smoothing, args.all_sets)
     print(f"\nDone. Outputs in {OUT_BASE}/<predictand>/[decadal10/]")
 
 

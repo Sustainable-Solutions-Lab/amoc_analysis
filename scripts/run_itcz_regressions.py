@@ -7,16 +7,18 @@ computed for two bands -- ``precip_centroid_lat_20`` (20S-20N) and
 ``precip_centroid_lat_30`` (30S-30N) -- read from the per-simulation
 ``scalars_annual_CESM2_{run}.nc`` files. Each is a single value per
 simulation-year. The predictors are the same scalar indices used elsewhere
-(Tglob, dT_NS, AMOC) and the same ten predictor sets and two smoothing variants
-(annual, decadal10).
+(Tglob, dT_NS, AMOC) and the same predictor sets and two smoothing variants
+(annual, decadal10). By default only sets 5 & 10 are run; pass ``--all-sets`` to
+run all ten.
 
 For each band x set a closed-form OLS is fit (``regression.fit_scalar_ols``);
 per-set coefficient Datasets (NetCDF) and a combined coefficient table (CSV) are
 written to ``data/output/itcz/{band20,band30}/[decadal10/]``.
 
-    python scripts/run_itcz_regressions.py
+    python scripts/run_itcz_regressions.py [--all-sets]
 """
 
+import argparse
 import os
 import sys
 
@@ -64,7 +66,7 @@ CAVEATS = """ITCZ regressions: pooled OLS of a scalar ITCZ-latitude response.
 """
 
 
-def run_for(response, smoothing):
+def run_for(response, smoothing, all_sets):
     tag = smoothing["tag"]
     out_dir = os.path.join(OUT_BASE, response["tag"], smoothing["subdir"])
     os.makedirs(out_dir, exist_ok=True)
@@ -79,7 +81,7 @@ def run_for(response, smoothing):
     print(f"[{head}] VIF (3-predictor union):", {k: round(v, 2) for k, v in vif.items()})
 
     rows = []
-    for set_def in reg.PREDICTOR_SETS:
+    for set_def in reg.select_predictor_sets(all_sets):
         names = set_def["predictors"]
         fit = reg.fit_scalar_ols(predictors[names], resp)
 
@@ -112,9 +114,15 @@ def run_for(response, smoothing):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--all-sets", action="store_true",
+        help="fit all ten predictor sets (default: only sets 5 & 10)",
+    )
+    args = parser.parse_args()
     for response in RESPONSES:
         for smoothing in SMOOTHINGS:
-            run_for(response, smoothing)
+            run_for(response, smoothing, args.all_sets)
     print(f"\nDone. Outputs in {OUT_BASE}/{{band20,band30}}/[decadal10/]")
 
 

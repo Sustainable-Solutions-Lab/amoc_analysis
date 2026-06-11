@@ -31,11 +31,13 @@ import os
 import numpy as np
 import xarray as xr
 
-# Per-variable output metadata. CMIP convention: ``prc`` is convective
-# precipitation, a water mass flux (kg m-2 s-1). Only ``tas`` and ``prc`` are
-# produced (total ``pr`` was never available for all runs).
+# Per-variable output metadata. CMIP convention: ``pr`` is total precipitation,
+# ``prc`` is convective precipitation; both water mass fluxes (kg m-2 s-1). The
+# main analysis uses ``prc`` for all four runs; ``pr`` (total) is available for
+# only historical-ssp585 and abrupt-4xCO2 (from ``data/input/pr_data/``).
 VAR_METADATA = {
     "tas": {"units": "K", "long_name": "Near-Surface Air Temperature"},
+    "pr": {"units": "kg m-2 s-1", "long_name": "Precipitation", "precip_kind": "total"},
     "prc": {
         "units": "kg m-2 s-1",
         "long_name": "Convective Precipitation",
@@ -148,6 +150,34 @@ INPUT_MANIFEST = [
         "segments": [
             {
                 "file": "pr_Amon_CESM2_u03-hos_1850001-202112.nc",
+                "source_variable": "pr",
+            }
+        ],
+    },
+    # Total precipitation (``pr``), available for only two runs, from the preserved
+    # files in ``data/input/pr_data/``. Produces a separate 2-run total-precip
+    # analysis alongside the 4-run convective (``prc``) one. The ssp585 segment is
+    # variant r4 (like the tas ssp585), so the r1->r4 splice matches the predictors.
+    {
+        "var": "pr",
+        "experiment": "historical-ssp585",
+        "segments": [
+            {
+                "file": "pr_data/pr_Amon_CESM2_historical_r1i1p1f1_gn_18500115-20141215.nc",
+                "source_variable": "pr",
+            },
+            {
+                "file": "pr_data/pr_Amon_CESM2_ssp585_r1i1p1f1_gn_20150115-21001215.nc",
+                "source_variable": "pr",
+            },
+        ],
+    },
+    {
+        "var": "pr",
+        "experiment": "abrupt-4xCO2",
+        "segments": [
+            {
+                "file": "pr_data/pr_Amon_CESM2_abrupt-4xCO2-001.nc",
                 "source_variable": "pr",
             }
         ],

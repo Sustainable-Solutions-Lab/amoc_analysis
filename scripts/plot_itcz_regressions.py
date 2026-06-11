@@ -9,12 +9,14 @@ annual sample (same directory) and the decadal10 sample (``decadal10/`` subdir):
 - ``itcz_scatter.pdf`` -- centroid latitude vs each single predictor (Tglob, ΔT_NS,
   AMOC), with the OLS line, 95% confidence band, and slope ± SE / R² / p annotated.
 - ``itcz_predicted_vs_observed.pdf`` -- predicted vs observed centroid latitude for
-  the multi-predictor sets 5, 6, 10, with the 1:1 line and R².
-- ``itcz_coefficients.pdf`` -- partial-slope (coef ± SE) bar charts for sets 5, 6, 10.
+  the multi-predictor sets (5 & 10 by default; 5, 6, 10 with ``--all-sets``), with
+  the 1:1 line and R².
+- ``itcz_coefficients.pdf`` -- partial-slope (coef ± SE) bar charts for the same sets.
 
-    python scripts/plot_itcz_regressions.py
+    python scripts/plot_itcz_regressions.py [--all-sets]
 """
 
+import argparse
 import os
 import sys
 
@@ -46,11 +48,12 @@ SMOOTHINGS = [
 ]
 
 
-def make_regression_figures(predictors, response, out_dir, band, sample_tag):
+def make_regression_figures(predictors, response, out_dir, band, sample_tag, all_sets):
     """Write the scatter, predicted-vs-observed, and coefficient figures.
 
     ``predictors``/``response`` are a pooled sample (annual or decadal); ``band``
-    and ``sample_tag`` label the figures ("20S-20N", "annual"/"decadal").
+    and ``sample_tag`` label the figures ("20S-20N", "annual"/"decadal"). The
+    multi-predictor panels cover the selected sets intersected with ``MULTI_SETS``.
     """
     os.makedirs(out_dir, exist_ok=True)
 
@@ -64,13 +67,13 @@ def make_regression_figures(predictors, response, out_dir, band, sample_tag):
     )
     print(f"wrote {sc_path}  (n={response.sizes['sample']})")
 
-    # Multi-predictor joint fits (sets 5, 6, 10), with the orthogonalized +
-    # quadratic columns available on the same pooled sample.
+    # Multi-predictor joint fits (the selected sets within MULTI_SETS = {5, 6, 10};
+    # 5 & 10 by default), with the orthogonalized + quadratic columns on the sample.
     full_p = reg.add_quadratic_columns(reg.add_orthogonalized_columns(predictors))
     run_of = full_p["run"].values
     observed = response.values
     pvo_panels, coef_panels = [], []
-    for set_def in reg.PREDICTOR_SETS:
+    for set_def in reg.select_predictor_sets(all_sets):
         if set_def["number"] not in MULTI_SETS:
             continue
         names = set_def["predictors"]
@@ -111,6 +114,12 @@ def make_regression_figures(predictors, response, out_dir, band, sample_tag):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--all-sets", action="store_true",
+        help="visualize all multi-predictor sets (5, 6, 10); default: sets 5 & 10",
+    )
+    args = parser.parse_args()
     for response in RESPONSES:
         band_dir = os.path.join(OUT_BASE, response["tag"])
         os.makedirs(band_dir, exist_ok=True)
@@ -133,7 +142,9 @@ def main():
                 response["var"], block=smoothing["block"]
             )
             out_dir = os.path.join(band_dir, smoothing["subdir"])
-            make_regression_figures(predictors, resp, out_dir, band, smoothing["tag"])
+            make_regression_figures(
+                predictors, resp, out_dir, band, smoothing["tag"], args.all_sets
+            )
 
 
 if __name__ == "__main__":

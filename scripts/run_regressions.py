@@ -1,13 +1,15 @@
 """Pooled per-grid-point regressions of gridded tas on scalar indices.
 
 Builds one pooled sample (years with all predictors present, across all four
-simulations), then for each of the six predictor sets fits a per-grid-point OLS
-and writes stippled coefficient maps (PDF) plus the coefficient fields (NetCDF)
-to ``data/output/regression/``.
+simulations), then for each selected predictor set fits a per-grid-point OLS and
+writes stippled coefficient maps (PDF) plus the coefficient fields (NetCDF) to
+``data/output/regression/``. By default only sets 5 & 10 are run; pass
+``--all-sets`` to run all ten.
 
-    python scripts/run_regressions.py
+    python scripts/run_regressions.py [--all-sets]
 """
 
+import argparse
 import os
 import sys
 
@@ -20,7 +22,7 @@ from output import plot_set
 OUT_BASE = os.path.join(dl._REPO_ROOT, "data", "output", "regression")
 
 # Predictands to analyze (each writes to its own subdirectory).
-PREDICTAND_NAMES = ["tas", "prc"]
+PREDICTAND_NAMES = ["tas", "prc", "pr"]
 
 # Smoothing variants. "annual" is the interannual analysis (existing outputs,
 # under <predictand>/); "decadal10" low-passes to slower timescales via 10-year
@@ -32,10 +34,12 @@ SMOOTHINGS = [
 
 CAVEATS = """Regression outputs: pooled per-grid-point OLS of a gridded predictand.
 
-- One regression per grid cell; the years of all four simulations
-  (historical-ssp585, abrupt-4xCO2, piControl, u03-hos) are POOLED into a single
-  fit with a common intercept and no per-run fixed effects. Pooling exploits
-  between-run differences in the index relationships to reduce collinearity.
+- One regression per grid cell; the years of the predictand's simulations are
+  POOLED into a single fit with a common intercept and no per-run fixed effects.
+  Most predictands pool all four (historical-ssp585, abrupt-4xCO2, piControl,
+  u03-hos); total 'pr' pools only historical-ssp585 + abrupt-4xCO2 (no total-pr
+  data for the others). Pooling exploits between-run differences in the index
+  relationships to reduce collinearity.
 - Common sample: years with all predictors (Tglob, dT_NS, AMOC) present, per run
   (= AMOC-present years).
 - Two smoothing variants: 'annual' (interannual, this directory) and 'decadal10'
@@ -49,13 +53,14 @@ CAVEATS = """Regression outputs: pooled per-grid-point OLS of a gridded predicta
   partial coefficients are poorly constrained. See per-set VIF printed at build.
 - Coefficient units are [predictand units] / [predictor units] (predictor units:
   Tglob, dT_NS in K; AMOC in Sv).
-- The 'prc' predictand is CONVECTIVE precipitation uniformly for all runs. For
-  historical-ssp585 the r1->r4 member splice (historical r1i1p1f1, ssp585 r4i1p1f1)
-  is identical for prc, tas, and AMOC, so predictand and predictors stay consistent.
+- The 'prc' predictand is CONVECTIVE precipitation (all four runs); 'pr' is TOTAL
+  precipitation (historical-ssp585 + abrupt-4xCO2 only). For historical-ssp585 the
+  r1->r4 member splice (historical r1i1p1f1, ssp585 r4i1p1f1) is identical for prc,
+  pr, tas, and AMOC, so predictand and predictors stay consistent.
 """
 
 
-def run_for_predictand(name, smoothing):
+def run_for_predictand(name, smoothing, all_sets):
     predictand = reg.PREDICTANDS[name]
     tag = smoothing["tag"]
     out_dir = os.path.join(OUT_BASE, name, smoothing["subdir"])
@@ -69,8 +74,8 @@ def run_for_predictand(name, smoothing):
     print(f"\n[{name}/{tag}] pooled sample: n={predictors.sizes['sample']}  per-run={per_run}")
     print(f"[{name}/{tag}] VIF (3-predictor union):", {k: round(v, 2) for k, v in vif.items()})
 
-    run_label = f"predictand={name}; smoothing={tag}; pooled: " + ", ".join(reg.RUNS)
-    for set_def in reg.PREDICTOR_SETS:
+    run_label = f"predictand={name}; smoothing={tag}; pooled: " + ", ".join(predictand["by_run"])
+    for set_def in reg.select_predictor_sets(all_sets):
         names = set_def["predictors"]
         fit = reg.fit_grid_ols(predictors[names], response)
 
@@ -100,9 +105,15 @@ def run_for_predictand(name, smoothing):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--all-sets", action="store_true",
+        help="fit all ten predictor sets (default: only sets 5 & 10)",
+    )
+    args = parser.parse_args()
     for name in PREDICTAND_NAMES:
         for smoothing in SMOOTHINGS:
-            run_for_predictand(name, smoothing)
+            run_for_predictand(name, smoothing, args.all_sets)
     print(f"\nDone. Outputs in {OUT_BASE}/<predictand>/[decadal10/]")
 
 

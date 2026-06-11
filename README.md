@@ -73,10 +73,22 @@ pr_Amon_CESM2_piControl_070001-079912.nc
 pr_Amon_CESM2_u03-hos_1850001-202112.nc
 ```
 
-The precipitation analysis uses **convective precipitation (`prc`) only** (total
-`pr` was never available for all runs). The `historical`/`ssp585`/`abrupt-4xCO2`
-runs supply `prc` directly (ssp585 split across two files); `piControl`/`u03-hos`
-supply convective precip under the variable name `pr` in their raw files.
+The **main** precipitation analysis uses **convective precipitation (`prc`)** across
+all four runs (total `pr` is not available for all of them). The
+`historical`/`ssp585`/`abrupt-4xCO2` runs supply `prc` directly (ssp585 split across
+two files); `piControl`/`u03-hos` supply convective precip under the variable name
+`pr` in their raw files.
+
+A **second, total-precipitation (`pr`) analysis** is produced *in addition*, from the
+total-`pr` files preserved in `data/input/pr_data/` (`historical`, `ssp585`,
+`abrupt-4xCO2` only — no `piControl`/`u03-hos`). It is therefore a **2-run** pooled
+analysis (historical-ssp585 + abrupt-4xCO2). Required files in `data/input/pr_data/`:
+
+```
+pr_Amon_CESM2_historical_r1i1p1f1_gn_18500115-20141215.nc
+pr_Amon_CESM2_ssp585_r1i1p1f1_gn_20150115-21001215.nc
+pr_Amon_CESM2_abrupt-4xCO2-001.nc
+```
 
 > **TODO (data source):** record where these files come from (archive/DOI/URL or
 > internal path) so the inputs themselves are reproducible — this is the one
@@ -145,11 +157,12 @@ five experiments:
 
 `scripts/make_annual_means.py` precomputes month-length-weighted annual means
 (correct for the `noleap` calendar) of the gridded fields, following CMIP
-variable names: `tas` (K) and `prc` (**convective** precipitation, kg m⁻² s⁻¹).
-The raw CAM files contribute `TREFHT` (renamed `tas`) and their convective precip
-(source variable `pr`, renamed `prc`). Each variable carries provenance attributes
-(`source_file`, `source_variable`, `original_units`, `annual_mean_method`,
-`precip_kind`). Output (8 files):
+variable names: `tas` (K), `prc` (**convective** precipitation, kg m⁻² s⁻¹), and
+`pr` (**total** precipitation, kg m⁻² s⁻¹, two runs). The raw CAM files contribute
+`TREFHT` (renamed `tas`) and their convective precip (source variable `pr`, renamed
+`prc`); total `pr` comes from `data/input/pr_data/`. Each variable carries provenance
+attributes (`source_file`, `source_variable`, `original_units`, `annual_mean_method`,
+`precip_kind`). Output (10 files):
 
 | File | Coverage |
 | --- | --- |
@@ -157,6 +170,8 @@ The raw CAM files contribute `TREFHT` (renamed `tas`) and their convective preci
 | `{tas,prc}_annual_CESM2_abrupt-4xCO2.nc` | years 1–999 |
 | `tas_annual_CESM2_piControl.nc`, `prc_annual_CESM2_piControl.nc` | years 700–799 |
 | `tas_annual_CESM2_u03-hos.nc`, `prc_annual_CESM2_u03-hos.nc` | 1850–2021 |
+| `pr_annual_CESM2_historical-ssp585.nc` (total precip) | 1850–2100 (251 yr, spliced) |
+| `pr_annual_CESM2_abrupt-4xCO2.nc` (total precip) | years 1–999 |
 
 **Precipitation caveats:**
 
@@ -220,9 +235,12 @@ missing dependent/predictor value (see `CLAUDE.md`).
 
 `scripts/run_regressions.py` regresses a gridded annual-mean **predictand** (one
 time series per grid cell) on the scalar indices `tas_global_mean` (Tglob),
-`tas_interhemispheric_diff` (dT_NS), and `amoc_strength` (AMOC). It runs for two
+`tas_interhemispheric_diff` (dT_NS), and `amoc_strength` (AMOC). It runs for three
 predictands: **`tas`** (temperature, K) and **`prc`** (convective precipitation,
-kg m⁻² s⁻¹, for every run; see precip caveats above).
+kg m⁻² s⁻¹, all four runs), plus **`pr`** (total precipitation, kg m⁻² s⁻¹, pooled
+over only historical-ssp585 + abrupt-4xCO2 — the runs with total-`pr` data; see
+precip caveats above). `pr` outputs land in `data/output/regression/pr/` (and
+`eof/pr/`), alongside the `tas`/`prc` trees.
 
 The years of all four simulations (historical-ssp585, abrupt-4xCO2, piControl,
 u03-hos; greenland-hosing is excluded — no gridded field) are **pooled into one
@@ -233,8 +251,9 @@ collinearity. All sets use one common sample: the years where every predictor is
 present (= AMOC-present years), **551 rows** (historical-ssp585 251 — full 1850–2100
 now that AMOC is gap-free — and 100 each from the other three runs).
 
-Ten predictor sets are produced (one multi-panel coefficient map per set, per
-predictand):
+Ten predictor sets are defined (one multi-panel coefficient map per set, per
+predictand). **By default only sets 5 & 10 are produced** (the two used in most
+analyses); pass `--all-sets` to any of the regression scripts to produce all ten:
 
 | Set | Predictors |
 | --- | --- |
@@ -388,11 +407,15 @@ bracket the unknown global-mean-temperature effect of the slowdown:
 
 The 0.1558 ± 0.0042 K/Sv slope is the OLS of global-mean tas on AMOC in the u03-hos
 hosing run (a within-experiment correlation, not a transferable causal sensitivity).
+For the **`pr`** predictand (no piControl run), the baseline is instead the
+historical-ssp585 **1850–1900 mean** (≈287.18 K / 17.84 Sv — essentially the piControl
+state). The set-10 centering means are read per predictand from the coef file's
+`centering_mean_*` attributes, so the 2-run `pr` fit uses its own centering.
 
 The predicted change between two conditions is `coef · (predictor(X) − predictor(R))`
 (the intercept cancels; set 10 evaluates its centered columns and interaction with the
-decadal pooled means). Each predictand is a **three-page** PDF
-(`data/output/scenarios/predicted_change_{tas,prc}.pdf`), rows = set 5 and set 10:
+fit's centering means). Each predictand is a **three-page** PDF
+(`data/output/scenarios/predicted_change_{tas,prc,pr}.pdf`), rows = set 5 and set 10:
 page 1 (2×3) is the change relative to piControl — **SSP585 − piControl**,
 **adj1 − piControl**, **adj2 − piControl**; page 2 (2×2) is the AMOC-slowdown effect —
 **SSP585 − adj1**, **SSP585 − adj2**; page 3 (2×2) expresses that effect as the
@@ -449,16 +472,21 @@ After placing the input files in `data/input/` (see [Data](#data)) and installin
 dependencies, run, in order:
 
 ```bash
-python scripts/make_annual_means.py        # data/processed/{tas,prc}_annual_*.nc
+python scripts/make_annual_means.py        # data/processed/{tas,prc,pr}_annual_*.nc
 python scripts/make_scalar_timeseries.py   # data/processed/scalars_annual_*.nc
-python scripts/run_regressions.py          # data/output/regression/{tas,prc}/[decadal10/]coef_set*.{pdf,nc}
+python scripts/run_regressions.py          # data/output/regression/{tas,prc,pr}/[decadal10/]coef_set*.{pdf,nc}
 python scripts/plot_predictor_scatter.py   # data/output/regression/predictor_scatter.pdf
 python scripts/plot_scalar_timeseries.py   # data/output/regression/predictor_timeseries.pdf
-python scripts/run_eof_regressions.py      # data/output/eof/{tas,prc}/[decadal10/]{eof_patterns,pc_timeseries}.pdf, pc_regression_set*.nc
-python scripts/predict_scenarios.py        # data/output/scenarios/predicted_change_{tas,prc}.pdf
+python scripts/run_eof_regressions.py      # data/output/eof/{tas,prc,pr}/[decadal10/]{eof_patterns,pc_timeseries}.pdf, pc_regression_set*.nc
+python scripts/predict_scenarios.py        # data/output/scenarios/predicted_change_{tas,prc,pr}.pdf
 python scripts/run_itcz_regressions.py     # data/output/itcz/{band20,band30}/[decadal10/]coef_table_*.csv, itcz_fit_set*.nc
 python scripts/plot_itcz_regressions.py    # data/output/itcz/{band20,band30}/{itcz_timeseries,itcz_scatter}.pdf
 ```
+
+The four set-fitting scripts (`run_regressions.py`, `run_eof_regressions.py`,
+`run_itcz_regressions.py`, `plot_itcz_regressions.py`) produce **only sets 5 & 10 by
+default**; add `--all-sets` to any of them to produce all ten. `predict_scenarios.py`
+uses sets 5 & 10 and so needs only the default run.
 
 `run_regressions.py` and `run_eof_regressions.py` each produce both the **annual**
 and the **decadal10** (slow-timescale) variant in one invocation.
@@ -476,7 +504,7 @@ much lighter for a LaTeX engine to load than the vector PDFs.
 
 Preprocessing (`scripts/make_annual_means.py`,
 `scripts/make_scalar_timeseries.py`), pooled per-grid-point regression analysis
-(`scripts/run_regressions.py`, sets 1–10 for tas and prc), predictor scatter
+(`scripts/run_regressions.py`, sets 1–10 for tas, prc, and pr), predictor scatter
 and time series (`scripts/plot_predictor_scatter.py`,
 `scripts/plot_scalar_timeseries.py`), and the additive EOF / principal-component
 path (`scripts/run_eof_regressions.py`, built on `src/eof.py`), and the decadal
