@@ -1,8 +1,9 @@
 """Plots for the ITCZ-latitude analysis: time series and regression figures.
 
 For each tropical-band centroid (20S-20N, 30S-30N) writes a time series to
-``data/output/itcz/{band20,band30}/`` and the regression figures for both the
-annual sample (same directory) and the decadal10 sample (``decadal10/`` subdir):
+``data/output/itcz/{band20,band30}/`` and the regression figures for the decadal10
+sample (``decadal10/`` subdir) by default; pass ``--do-annuals`` to also write the
+annual-sample figures (same directory):
 
 - ``itcz_timeseries.pdf`` -- the precip centroid latitude per simulation, annual
   (thin) with the decadal (10-year block-mean) values overlaid (band level only).
@@ -13,7 +14,7 @@ annual sample (same directory) and the decadal10 sample (``decadal10/`` subdir):
   the 1:1 line and R².
 - ``itcz_coefficients.pdf`` -- partial-slope (coef ± SE) bar charts for the same sets.
 
-    python scripts/plot_itcz_regressions.py [--all-sets]
+    python scripts/plot_itcz_regressions.py [--all-sets] [--do-annuals]
 """
 
 import argparse
@@ -38,13 +39,6 @@ MULTI_SETS = [5, 6, 10]  # multi-predictor sets to visualize jointly
 RESPONSES = [
     {"tag": "band20", "var": "precip_centroid_lat_20", "label": "20S-20N"},
     {"tag": "band30", "var": "precip_centroid_lat_30", "label": "30S-30N"},
-]
-
-# Smoothing variants for the regression figures: annual at the band level,
-# decadal10 in its own subdir (mirrors the run_itcz_regressions.py layout).
-SMOOTHINGS = [
-    {"tag": "annual", "block": None, "subdir": ""},
-    {"tag": "decadal10", "block": 10, "subdir": "decadal10"},
 ]
 
 
@@ -119,6 +113,10 @@ def main():
         "--all-sets", action="store_true",
         help="visualize all multi-predictor sets (5, 6, 10); default: sets 5 & 10",
     )
+    parser.add_argument(
+        "--do-annuals", action="store_true",
+        help="also write the annual-sample regression figures (default: decadal10 only)",
+    )
     args = parser.parse_args()
     for response in RESPONSES:
         band_dir = os.path.join(OUT_BASE, response["tag"])
@@ -137,7 +135,7 @@ def main():
         print(f"wrote {ts_path}  (annual n={annual_r.sizes['sample']}, "
               f"decadal n={decadal_r.sizes['sample']})")
 
-        for smoothing in SMOOTHINGS:
+        for smoothing in reg.select_smoothings(args.do_annuals):
             predictors, resp = reg.build_pooled_scalar(
                 response["var"], block=smoothing["block"]
             )

@@ -3,10 +3,11 @@
 Builds one pooled sample (years with all predictors present, across all four
 simulations), then for each selected predictor set fits a per-grid-point OLS and
 writes stippled coefficient maps (PDF) plus the coefficient fields (NetCDF) to
-``data/output/regression/``. By default only sets 5 & 10 are run; pass
-``--all-sets`` to run all ten.
+``data/output/regression/``. By default only sets 5 & 10 are run (pass
+``--all-sets`` for all ten) and only the decadal10 smoothing (pass ``--do-annuals``
+to also run the annual variant).
 
-    python scripts/run_regressions.py [--all-sets]
+    python scripts/run_regressions.py [--all-sets] [--do-annuals]
 """
 
 import argparse
@@ -24,14 +25,6 @@ OUT_BASE = os.path.join(dl._REPO_ROOT, "data", "output", "regression")
 # Predictands to analyze (each writes to its own subdirectory).
 PREDICTAND_NAMES = ["tas", "prc", "pr"]
 
-# Smoothing variants. "annual" is the interannual analysis (existing outputs,
-# under <predictand>/); "decadal10" low-passes to slower timescales via 10-year
-# block means and writes to <predictand>/decadal10/.
-SMOOTHINGS = [
-    {"tag": "annual", "block": None, "subdir": ""},
-    {"tag": "decadal10", "block": 10, "subdir": "decadal10"},
-]
-
 CAVEATS = """Regression outputs: pooled per-grid-point OLS of a gridded predictand.
 
 - One regression per grid cell; the years of the predictand's simulations are
@@ -42,9 +35,10 @@ CAVEATS = """Regression outputs: pooled per-grid-point OLS of a gridded predicta
   relationships to reduce collinearity.
 - Common sample: years with all predictors (Tglob, dT_NS, AMOC) present, per run
   (= AMOC-present years).
-- Two smoothing variants: 'annual' (interannual, this directory) and 'decadal10'
-  (slow timescales, decadal10/ subdir) = non-overlapping 10-year block means
-  applied per run/segment to BOTH predictors and predictand before pooling.
+- Smoothing: 'decadal10' (slow timescales, decadal10/ subdir) = non-overlapping
+  10-year block means applied per run/segment to BOTH predictors and predictand
+  before pooling, produced by default. The 'annual' (interannual, this directory)
+  variant is produced only with --do-annuals.
 - p-values are nominal OLS (independent residuals). For 'annual' the within-run
   autocorrelation of annual data makes them OPTIMISTIC. The 'decadal10' block
   means decimate to ~independent decadal samples, so its degrees of freedom (and
@@ -110,9 +104,13 @@ def main():
         "--all-sets", action="store_true",
         help="fit all ten predictor sets (default: only sets 5 & 10)",
     )
+    parser.add_argument(
+        "--do-annuals", action="store_true",
+        help="also run the annual (interannual) variant (default: decadal10 only)",
+    )
     args = parser.parse_args()
     for name in PREDICTAND_NAMES:
-        for smoothing in SMOOTHINGS:
+        for smoothing in reg.select_smoothings(args.do_annuals):
             run_for_predictand(name, smoothing, args.all_sets)
     print(f"\nDone. Outputs in {OUT_BASE}/<predictand>/[decadal10/]")
 

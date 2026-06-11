@@ -155,6 +155,24 @@ def select_predictor_sets(all_sets=False):
     return [s for s in PREDICTOR_SETS if s["number"] in DEFAULT_SET_NUMBERS]
 
 
+# Smoothing variants the orchestration scripts can run: 'annual' (interannual) and
+# 'decadal10' (non-overlapping 10-year block means, written to a decadal10/ subdir).
+# decadal10 is the default; the annual variant is opt-in via each script's
+# ``--do-annuals`` flag.
+SMOOTHINGS = [
+    {"tag": "annual", "block": None, "subdir": ""},
+    {"tag": "decadal10", "block": 10, "subdir": "decadal10"},
+]
+
+
+def select_smoothings(do_annuals=False):
+    """Smoothing variants to run: decadal10 only by default; both (annual first when
+    requested) when ``do_annuals``. The decadal10 subdir layout is unchanged either way."""
+    if do_annuals:
+        return SMOOTHINGS
+    return [s for s in SMOOTHINGS if s["tag"] == "decadal10"]
+
+
 # Union of all predictors used in any set; defines the common sample of years.
 PREDICTOR_UNION = ["tas_global_mean", "tas_interhemispheric_diff", "amoc_strength"]
 

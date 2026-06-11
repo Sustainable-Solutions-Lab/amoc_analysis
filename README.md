@@ -302,8 +302,8 @@ validated against `statsmodels` (agreement < 1e-6), and the global mean of the
 ### Slow-timescale (decadal) variant
 
 To characterize variability slower than interannual, `run_regressions.py` (and
-the EOF script below) also produces a **decadal** variant alongside the annual
-one. The low-pass is **non-overlapping 10-year block means**
+the EOF script below) produces a **decadal** variant by default (the annual variant
+is opt-in via `--do-annuals`). The low-pass is **non-overlapping 10-year block means**
 (`data_loader.block_average_on_years`), applied **per run, per contiguous
 segment, to both the predictors and the predictand** inside
 `regression.build_pooled(block=10)` *before* pooling — so the identical filter
@@ -321,8 +321,8 @@ annual-variant autocorrelation caveat rather than deferring it, at the cost of
 sample size (df ≈ 40 still supports the 9-term set 9). Quadratic and product terms
 are formed from the *filtered* bases (filter-then-square), i.e. the genuinely
 low-frequency response surface. Decadal results go to
-`data/output/regression/<predictand>/decadal10/` (same filenames as the annual
-outputs, which stay in `<predictand>/`).
+`data/output/regression/<predictand>/decadal10/`; the annual outputs (produced only
+with `--do-annuals`) use the same filenames in the top-level `<predictand>/`.
 
 ### EOF / principal-component analysis (additive path)
 
@@ -484,12 +484,11 @@ python scripts/plot_itcz_regressions.py    # data/output/itcz/{band20,band30}/{i
 ```
 
 The four set-fitting scripts (`run_regressions.py`, `run_eof_regressions.py`,
-`run_itcz_regressions.py`, `plot_itcz_regressions.py`) produce **only sets 5 & 10 by
-default**; add `--all-sets` to any of them to produce all ten. `predict_scenarios.py`
-uses sets 5 & 10 and so needs only the default run.
-
-`run_regressions.py` and `run_eof_regressions.py` each produce both the **annual**
-and the **decadal10** (slow-timescale) variant in one invocation.
+`run_itcz_regressions.py`, `plot_itcz_regressions.py`) default to **only sets 5 & 10**
+and **only the decadal10** (slow-timescale) smoothing; add `--all-sets` to produce all
+ten sets and `--do-annuals` to also produce the annual (interannual) variant (the flags
+compose). `predict_scenarios.py` uses sets 5 & 10 from the decadal10 run, so it needs
+only the default run.
 
 Each script is a thin wrapper over `src/` and prints what it writes. All outputs
 land under `data/` (git-ignored) and are fully regenerable from the inputs.
@@ -509,6 +508,6 @@ and time series (`scripts/plot_predictor_scatter.py`,
 `scripts/plot_scalar_timeseries.py`), and the additive EOF / principal-component
 path (`scripts/run_eof_regressions.py`, built on `src/eof.py`), and the decadal
 scenario-prediction maps (`scripts/predict_scenarios.py`), all built on
-`src/data_loader.py`, `src/regression.py`, and `src/output.py`. Both the
-regression and EOF analyses run in an **annual** (interannual) and a **decadal10**
-(10-year block-mean, slow-timescale) variant.
+`src/data_loader.py`, `src/regression.py`, and `src/output.py`. The regression and
+EOF analyses run in a **decadal10** (10-year block-mean, slow-timescale) variant by
+default; the **annual** (interannual) variant is opt-in via `--do-annuals`.

@@ -5,12 +5,11 @@ grand-mean anomalies over the pooled AMOC-complete sample, plot the leading EOF
 patterns, plot the principal-component (EOF weighting) time series per simulation,
 and regress the leading PCs (>=95% variance) on each selected predictor set, saving
 the PC-space regression coefficients. Complements scripts/run_regressions.py. By
-default only sets 5 & 10 are run; pass ``--all-sets`` to run all ten.
+default only sets 5 & 10 are run (pass ``--all-sets`` for all ten) and only the
+decadal10 smoothing (pass ``--do-annuals`` to also run the annual variant,
+'annual' (interannual, <predictand>/); decadal10 writes to <predictand>/decadal10/).
 
-Two smoothing variants are produced: 'annual' (interannual, <predictand>/) and
-'decadal10' (10-year block means, <predictand>/decadal10/).
-
-    python scripts/run_eof_regressions.py [--all-sets]
+    python scripts/run_eof_regressions.py [--all-sets] [--do-annuals]
 """
 
 import argparse
@@ -39,13 +38,6 @@ PREDICTAND_NAMES = ["tas", "prc", "pr"]
 VARIANCE_THRESHOLD = 0.95
 MIN_VARIANCE_FRACTION = 0.01
 
-# Smoothing variants (see scripts/run_regressions.py): 'annual' is the
-# interannual analysis; 'decadal10' low-passes to slow timescales via 10-year
-# block means applied per run/segment to predictors and predictand before pooling.
-SMOOTHINGS = [
-    {"tag": "annual", "block": None, "subdir": ""},
-    {"tag": "decadal10", "block": 10, "subdir": "decadal10"},
-]
 
 CAVEATS = """EOF / principal-component analysis outputs (additive to the direct maps).
 
@@ -70,8 +62,9 @@ CAVEATS = """EOF / principal-component analysis outputs (additive to the direct 
       (only set 10 by default; all three with --all-sets): fitted (X*beta) vs actual
       PC over time per simulation, a direct view of how well the scalars predict
       each weighting.
-- Two smoothing variants: 'annual' (interannual, this directory) and 'decadal10'
-  (decadal10/ subdir) = 10-year block means per run/segment before pooling.
+- Smoothing: 'decadal10' (decadal10/ subdir) = 10-year block means per run/segment
+  before pooling, produced by default; 'annual' (interannual, this directory) only
+  with --do-annuals.
 - Annual tas is strongly low-rank (2 modes >=95%); annual prc is not
   (237 modes); decadal smoothing removes the high-frequency noise and lowers the
   retained-mode count (reported at run time).
@@ -157,9 +150,13 @@ def main():
         "--all-sets", action="store_true",
         help="regress on all ten predictor sets (default: only sets 5 & 10)",
     )
+    parser.add_argument(
+        "--do-annuals", action="store_true",
+        help="also run the annual (interannual) variant (default: decadal10 only)",
+    )
     args = parser.parse_args()
     for name in PREDICTAND_NAMES:
-        for smoothing in SMOOTHINGS:
+        for smoothing in reg.select_smoothings(args.do_annuals):
             run_for_predictand(name, smoothing, args.all_sets)
     print(f"\nDone. Outputs in {OUT_BASE}/<predictand>/[decadal10/]")
 

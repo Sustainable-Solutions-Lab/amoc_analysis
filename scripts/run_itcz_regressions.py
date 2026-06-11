@@ -7,15 +7,15 @@ computed for two bands -- ``precip_centroid_lat_20`` (20S-20N) and
 ``precip_centroid_lat_30`` (30S-30N) -- read from the per-simulation
 ``scalars_annual_CESM2_{run}.nc`` files. Each is a single value per
 simulation-year. The predictors are the same scalar indices used elsewhere
-(Tglob, dT_NS, AMOC) and the same predictor sets and two smoothing variants
-(annual, decadal10). By default only sets 5 & 10 are run; pass ``--all-sets`` to
-run all ten.
+(Tglob, dT_NS, AMOC) and the same predictor sets and smoothing variants. By default
+only sets 5 & 10 are run (pass ``--all-sets`` for all ten) and only the decadal10
+smoothing (pass ``--do-annuals`` to also run the annual variant).
 
 For each band x set a closed-form OLS is fit (``regression.fit_scalar_ols``);
 per-set coefficient Datasets (NetCDF) and a combined coefficient table (CSV) are
 written to ``data/output/itcz/{band20,band30}/[decadal10/]``.
 
-    python scripts/run_itcz_regressions.py [--all-sets]
+    python scripts/run_itcz_regressions.py [--all-sets] [--do-annuals]
 """
 
 import argparse
@@ -37,11 +37,6 @@ RESPONSES = [
     {"tag": "band30", "var": "precip_centroid_lat_30", "label": "30S-30N"},
 ]
 
-SMOOTHINGS = [
-    {"tag": "annual", "block": None, "subdir": ""},
-    {"tag": "decadal10", "block": 10, "subdir": "decadal10"},
-]
-
 CAVEATS = """ITCZ regressions: pooled OLS of a scalar ITCZ-latitude response.
 
 - Response: precip_centroid_lat = the precipitation-mass centroid latitude (deg N)
@@ -52,9 +47,10 @@ CAVEATS = """ITCZ regressions: pooled OLS of a scalar ITCZ-latitude response.
   u03-hos) are POOLED into a single fit with a common intercept and no per-run
   fixed effects, on years where all predictors (Tglob, dT_NS, AMOC) AND the
   response are present.
-- Two smoothing variants: 'annual' (interannual, this directory) and 'decadal10'
-  (slow timescales, decadal10/ subdir) = non-overlapping 10-year block means
-  applied per run/segment to BOTH predictors and response before pooling.
+- Smoothing: 'decadal10' (slow timescales, decadal10/ subdir) = non-overlapping
+  10-year block means applied per run/segment to BOTH predictors and response
+  before pooling, produced by default; 'annual' (interannual, this directory) only
+  with --do-annuals.
 - p-values are nominal OLS (independent residuals). For 'annual', within-run
   autocorrelation makes them OPTIMISTIC; 'decadal10' decimates to ~independent
   decadal samples with far more trustworthy degrees of freedom (at lower n).
@@ -119,9 +115,13 @@ def main():
         "--all-sets", action="store_true",
         help="fit all ten predictor sets (default: only sets 5 & 10)",
     )
+    parser.add_argument(
+        "--do-annuals", action="store_true",
+        help="also run the annual (interannual) variant (default: decadal10 only)",
+    )
     args = parser.parse_args()
     for response in RESPONSES:
-        for smoothing in SMOOTHINGS:
+        for smoothing in reg.select_smoothings(args.do_annuals):
             run_for(response, smoothing, args.all_sets)
     print(f"\nDone. Outputs in {OUT_BASE}/{{band20,band30}}/[decadal10/]")
 
