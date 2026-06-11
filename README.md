@@ -175,9 +175,11 @@ attributes (`source_file`, `source_variable`, `original_units`, `annual_mean_met
 
 **Precipitation caveats:**
 
-- **Convective only.** The analysis uses convective precipitation (`prc`) for
-  every run — total `pr` was never available for all runs. Do not interpret `prc`
-  as total precipitation.
+- **Two precipitation analyses.** The primary analysis uses convective
+  precipitation (`prc`) across all four runs; a separate **total-precipitation
+  (`pr`)** analysis covers only the two runs with total-`pr` data (historical-ssp585
+  + abrupt-4xCO2). Do not interpret `prc` as total precipitation, and do not compare
+  `pr` and `prc` coefficients as if they were the same field.
 - **Mislabeled source units.** The raw `piControl`/`u03-hos` `prc` source carries
   `units = "m/s"`, but its values are a water mass flux already in kg m⁻² s⁻¹
   (they match the CMIP precip magnitude; true m s⁻¹ precipitation would be ~1000×
@@ -330,8 +332,8 @@ with `--do-annuals`) use the same filenames in the top-level `<predictand>/`.
 per-grid-point maps (it does not replace `run_regressions.py`). It decomposes each
 gridded field into empirical orthogonal functions (EOFs) and examines how the
 leading principal-component (PC) time series — the EOF *weightings over time* —
-behave and relate to the predictors. It is produced for both the annual and the
-decadal variant.
+behave and relate to the predictors. Like the gridded regressions it produces the
+**decadal10** variant by default (the annual variant is opt-in via `--do-annuals`).
 
 Method (`src/eof.py`):
 
@@ -350,9 +352,10 @@ Method (`src/eof.py`):
   binds (the convective-precip field is not low-rank); the retained-mode count is
   reported per variant at run time. `eof_patterns.pdf` maps up to the leading 9
   modes.
-- **PC regression:** the retained PCs are regressed on the same predictor sets
-  1–10 (including the orthogonalized, quadratic, and interaction columns) with an
-  intercept; the PC-space coefficients (coef/SE/t/p) are saved.
+- **PC regression:** the retained PCs are regressed on the selected predictor sets
+  (5 & 10 by default; all ten with `--all-sets`, including the orthogonalized,
+  quadratic, and interaction columns) with an intercept; the PC-space coefficients
+  (coef/SE/t/p) are saved.
 
 Outputs per predictand and variant (`data/output/eof/<predictand>/` and
 `…/decadal10/`):
@@ -375,10 +378,11 @@ analog of the 2D coefficient maps, with the discrete EOF-mode index replacing th
   ±SE whisker. Non-significant bars (p > 0.05) are faded; the panel title reports
   R² and the mode's variance share. t/p are scale-invariant and match the per-set
   `pc_regression_set{N}_*.nc`.
-- `pc_prediction.pdf` — one **page per set** (the full 3-index set 6, the quadratic
-  set 9, and the interaction set 10): the fitted X·β overlaid on the actual PC over
-  time, one panel per simulation — a direct view of how well the scalars predict
-  each EOF weighting.
+- `pc_prediction.pdf` — one **page per richer set** among the 3-index set 6, the
+  quadratic set 9, and the interaction set 10 that was actually fit (only set 10 by
+  default; all three with `--all-sets`): the fitted X·β overlaid on the actual PC
+  over time, one panel per simulation — a direct view of how well the scalars
+  predict each EOF weighting.
 
 The spatial **fingerprint** maps (Σₖ βₖ·EOFₖ, the PC regression projected back to
 the grid) are intentionally **not** generated — the EOFs and PC weightings are the
@@ -435,14 +439,14 @@ directly comparable.
 `scripts/run_itcz_regressions.py` regresses the **scalar** ITCZ index — the
 precipitation-mass centroid latitude, for two tropical bands
 (`precip_centroid_lat_20`, `precip_centroid_lat_30`) — on the same scalar indices
-(Tglob, dT_NS, AMOC), using the same ten predictor sets and the same `annual` /
-`decadal10` pooling as the gridded regressions. Because the response is a single
-series per simulation-year (not a gridded field or PCs), it uses
-`regression.build_pooled_scalar` and `regression.fit_scalar_ols` (a 1-D OLS with
-the same normal-equations math as the gridded fit, validated against `statsmodels`,
-plus 95 % confidence intervals). The pooled common sample is the same AMOC-complete
-500 years (50 decadal blocks). Outputs go to
-`data/output/itcz/{band20,band30}/[decadal10/]`:
+(Tglob, dT_NS, AMOC), using the same predictor sets (5 & 10 by default, all ten with
+`--all-sets`) and the same decadal10 pooling (annual via `--do-annuals`) as the
+gridded regressions. Because the response is a single series per simulation-year
+(not a gridded field or PCs), it uses `regression.build_pooled_scalar` and
+`regression.fit_scalar_ols` (a 1-D OLS with the same normal-equations math as the
+gridded fit, validated against `statsmodels`, plus 95 % confidence intervals). The
+pooled common sample is the same AMOC-complete 551 years (55 decadal blocks).
+Outputs go to `data/output/itcz/{band20,band30}/[decadal10/]`:
 
 - `coef_table_{annual,decadal10}.csv` — coef, SE, t, p, 95 % CI per parameter,
   with R² and n, for every set (the scalar analog of the gridded coefficient maps).
@@ -452,19 +456,23 @@ plus 95 % confidence intervals). The pooled common sample is the same AMOC-compl
 - `itcz_scatter.pdf` — ITCZ latitude vs each single predictor with the OLS line,
   95 % CI band, and slope ± SE / R² / p annotated.
 - `itcz_predicted_vs_observed.pdf` — predicted vs observed centroid latitude for
-  the multi-predictor sets 5, 6, 10, with the 1:1 line and R² (shows how well the
-  *joint* regression reproduces the ITCZ across runs).
-- `itcz_coefficients.pdf` — partial-slope (coef ± SE) bar charts for sets 5, 6, 10,
+  the multi-predictor sets (5 & 10 by default; 5, 6, 10 with `--all-sets`), with the
+  1:1 line and R² (shows how well the *joint* regression reproduces the ITCZ across
+  runs).
+- `itcz_coefficients.pdf` — partial-slope (coef ± SE) bar charts for the same sets,
   blue/red by sign and hatched where not significant.
 
 The three regression figures (`itcz_scatter`, `itcz_predicted_vs_observed`,
-`itcz_coefficients`) are written for both the annual sample (in the band directory)
-and the decadal10 sample (in the `decadal10/` subdir).
+`itcz_coefficients`) are written for the decadal10 sample (in the `decadal10/`
+subdir) by default; `--do-annuals` additionally writes them for the annual sample
+(in the band directory). The `itcz_timeseries.pdf` overview is always written.
 
 The interhemispheric temperature difference is the strongest single predictor of
-the centroid (annual R² ≈ 0.72): the ITCZ shifts toward the warmer hemisphere. AMOC
-adds substantial skill (single-predictor R² ≈ 0.4–0.5), and the three-predictor set
-explains the bulk of the variance (annual R² ≈ 0.82–0.89, decadal ≈ 0.96–0.97).
+the centroid (annual R² ≈ 0.54 at 20°, 0.75 at 30°): the ITCZ shifts toward the
+warmer hemisphere. AMOC adds substantial skill (single-predictor R² ≈ 0.36–0.45),
+and the three-predictor set explains the bulk of the variance (annual R² ≈
+0.82–0.89, decadal ≈ 0.96). (Values are for the convective-`prc` centroid over the
+AMOC-complete 551-year sample.)
 
 ## Reproducing the results
 
@@ -523,9 +531,19 @@ Preprocessing (`scripts/make_annual_means.py`,
 `scripts/make_scalar_timeseries.py`), pooled per-grid-point regression analysis
 (`scripts/run_regressions.py`, sets 1–10 for tas, prc, and pr), predictor scatter
 and time series (`scripts/plot_predictor_scatter.py`,
-`scripts/plot_scalar_timeseries.py`), and the additive EOF / principal-component
-path (`scripts/run_eof_regressions.py`, built on `src/eof.py`), and the decadal
-scenario-prediction maps (`scripts/predict_scenarios.py`), all built on
-`src/data_loader.py`, `src/regression.py`, and `src/output.py`. The regression and
-EOF analyses run in a **decadal10** (10-year block-mean, slow-timescale) variant by
-default; the **annual** (interannual) variant is opt-in via `--do-annuals`.
+`scripts/plot_scalar_timeseries.py`), the additive EOF / principal-component path
+(`scripts/run_eof_regressions.py`, built on `src/eof.py`), the decadal
+scenario-prediction maps (`scripts/predict_scenarios.py`), and the ITCZ-centroid
+scalar regressions (`scripts/run_itcz_regressions.py`,
+`scripts/plot_itcz_regressions.py`), all built on `src/data_loader.py`,
+`src/regression.py`, and `src/output.py`. The regression, EOF, and ITCZ analyses run
+in a **decadal10** (10-year block-mean, slow-timescale) variant by default; the
+**annual** (interannual) variant is opt-in via `--do-annuals`, and only sets 5 & 10
+are fit unless `--all-sets` is given.
+
+A parallel **monthly** (per-calendar-month) path —
+`scripts/make_monthly_means.py`, `scripts/run_monthly_regressions.py`,
+`scripts/predict_scenarios_monthly.py` — regresses each calendar month's gridded
+field on the annual indices and projects the monthly scenario changes, writing
+`(month, param, lat, lon)` NetCDFs and rasterized all-months PDFs (`--vector` for
+vector output).
