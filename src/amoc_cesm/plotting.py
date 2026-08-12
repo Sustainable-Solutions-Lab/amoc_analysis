@@ -98,8 +98,9 @@ def _draw_significance(ax, da, mask, style, contour_levels) -> None:
     ``"field"`` (default) contours the field itself at the colorbar's own tick
     values, drawn only inside significant regions. Zero is excluded — the
     zero contour would trace the sign change, not a magnitude, and would appear
-    wherever a field merely crosses zero. Negative contours are dashed, so the
-    sign is readable without reference to the color.
+    wherever a field merely crosses zero. All contours are solid, overriding
+    matplotlib's dashed-for-negative default: the color already carries sign,
+    and dashes only added visual noise.
 
     ``"outline"`` instead traces the boundary of the significant region, which
     says where the signal is trustworthy but nothing about its magnitude.
@@ -118,13 +119,13 @@ def _draw_significance(ax, da, mask, style, contour_levels) -> None:
         values, lon, lat = _cyclic(masked)
         ax.contour(
             lon, lat, values, levels=contour_levels,
-            colors="black", linewidths=0.4, transform=DATA_CRS,
+            colors="black", linewidths=0.4, linestyles="solid", transform=DATA_CRS,
         )
     else:
         raise ValueError(f"significance_style must be 'outline' or 'field', got {style!r}")
 
 
-def _draw_missing(ax, co2: int, hosing: float) -> None:
+def _draw_missing(ax, note: str) -> None:
     ax.set_box_aspect(ROBINSON_BOX_ASPECT)
     ax.set_xticks([])
     ax.set_yticks([])
@@ -138,7 +139,7 @@ def _draw_missing(ax, co2: int, hosing: float) -> None:
         )
     )
     ax.text(
-        0.5, 0.5, f"not yet run\n{get_case(co2, hosing).name}",
+        0.5, 0.5, note,
         transform=ax.transAxes, ha="center", va="center",
         fontsize=8, color=TEXT_SECONDARY, linespacing=1.5,
     )
@@ -180,6 +181,7 @@ def grid_3x3(
     significance: dict[tuple[int, float], xr.DataArray] | None = None,
     significance_style: str = "field",
     annotations: dict[tuple[int, float], str] | None = None,
+    missing_notes: dict[tuple[int, float], str] | None = None,
     extend: str = "neither",
     figsize: tuple[float, float] = (13.5, 7.6),
 ) -> plt.Figure:
@@ -226,7 +228,9 @@ def grid_3x3(
                     )
             else:
                 ax = fig.add_subplot(gs[r, c])
-                _draw_missing(ax, co2, hosing)
+                default_note = f"not yet run\n{get_case(co2, hosing).name}"
+                note = (missing_notes or {}).get(key, default_note)
+                _draw_missing(ax, note)
 
             map_axes.append(ax)
             if r == 0:

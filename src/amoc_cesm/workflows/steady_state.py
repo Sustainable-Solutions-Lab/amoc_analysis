@@ -13,8 +13,17 @@ import numpy as np
 import xarray as xr
 
 from ..analysis import steady_state, steady_state_anomaly
-from ..config import CONTROL, STEADY_STATE_YEARS, available_cases
-from ..plotting import grid_3x3
+from ..config import (
+    CASES,
+    CO2_LEVELS,
+    CONTROL,
+    HOSING_LEVELS,
+    STEADY_STATE_YEARS,
+    available_cases,
+    get_case,
+)
+from ..io import cases_with, load_var, variables_in
+from ..plotting import TEXT_PRIMARY, TEXT_SECONDARY, grid_3x3
 from ..significance import significance_mask
 from ..variables import display_name, info, to_display_units
 
@@ -25,11 +34,25 @@ def _key(case) -> tuple[int, float]:
     return (case.co2, case.hosing)
 
 
+def _missing_notes(var: str) -> dict[tuple[int, float], str]:
+    """Distinguish a case that has not run from one that ran without this field.
+
+    Both leave an empty panel, but they mean different things: one will fill in
+    when the simulation finishes, the other needs the field requested from the
+    run archive. `TREFHT`, archived only for `picontrol`, is the live example.
+    """
+    return {
+        _key(case): f"{case.name}\nno {var} archived"
+        for case in available_cases()
+        if case not in cases_with(var)
+    }
+
+
 def absolute_page(var: str) -> plt.Figure:
-    """All available cases' steady-state climatologies on one shared scale."""
+    """Steady-state climatologies of every case that archives this field."""
     fields = {
         _key(case): to_display_units(steady_state(case, var), var)
-        for case in available_cases()
+        for case in cases_with(var)
     }
     meta = info(var, next(iter(fields.values())))
     vmin = min(float(da.min()) for da in fields.values())
@@ -43,6 +66,7 @@ def absolute_page(var: str) -> plt.Figure:
         cmap=meta.sequential_cmap,
         vmin=vmin,
         vmax=vmax,
+        missing_notes=_missing_notes(var),
     )
 
 
@@ -60,7 +84,7 @@ def anomaly_page(
     fields: dict[tuple[int, float], xr.DataArray] = {}
     masks: dict[tuple[int, float], xr.DataArray] = {}
 
-    for case in available_cases():
+    for case in cases_with(var):
         # check_range=False: these are differences, not absolute values.
         fields[_key(case)] = to_display_units(
             steady_state_anomaly(case, var), var, check_range=False
@@ -99,13 +123,70 @@ def anomaly_page(
         significance=masks,
         significance_style=significance_style,
         annotations={_key(CONTROL): "reference (zero by construction)"},
+        missing_notes=_missing_notes(var),
     )
 
 
 def pages(var: str, **kwargs) -> Iterator[plt.Figure]:
-    """The full page sequence for one variable."""
+    """The page sequence for one variable: absolute, then anomaly.
+
+    The anomaly page needs both the control and at least one perturbed case to
+    archive the field. `TREFHT` has only the control, so it gets an absolute
+    page alone rather than a page of empty panels.
+    """
     yield absolute_page(var)
-    yield anomaly_page(var, **kwargs)
+    archiving = cases_with(var)
+    if CONTROL in archiving and len(archiving) > 1:
+        yield anomaly_page(var, **kwargs)
+
+
+def status_page(variables: list[str]) -> plt.Figure:
+    """Front page: what has run, what has not, and which fields are incomplete.
+
+    Seeing what is missing is one of the book's jobs, so it leads with that
+    rather than leaving it to be inferred from empty panels later on.
+    """
+    fig = plt.figure(figsize=(13.5, 7.6))
+    fig.suptitle("Quasi-steady-state book — coverage", fontsize=14,
+                 color=TEXT_PRIMARY, x=0.06, ha="left", y=0.95)
+    fig.text(0.06, 0.905, f"Steady-state window {WINDOW}   ·   built from "
+             f"{len(available_cases())} of {len(CASES)} cases   ·   "
+             f"{len(variables)} variables", fontsize=10, color=TEXT_SECONDARY)
+
+    lines = ["Simulations", ""]
+    for co2 in CO2_LEVELS:
+        for hosing in HOSING_LEVELS:
+            case = get_case(co2, hosing)
+            cell = f"  {co2}xCO2, {hosing:+.1f} Sv   {case.name:<16}"
+            if case.exists:
+                years = load_var(case, variables[0] if variables[0] in variables_in(case)
+                                 else variables_in(case)[0], years=None)["year"].values
+                lines.append(f"{cell} {len(years)} yr, {years[0]}-{years[-1]}")
+            else:
+                lines.append(f"{cell} NOT YET RUN")
+    fig.text(0.06, 0.83, "\n".join(lines), fontsize=9.5, color=TEXT_PRIMARY,
+             va="top", family="monospace", linespacing=1.6)
+
+    incomplete = {v: [c.name for c in available_cases() if c not in cases_with(v)]
+                  for v in variables}
+    incomplete = {v: miss for v, miss in incomplete.items() if miss}
+    right = ["Fields missing from cases that have run", ""]
+    if incomplete:
+        for v, miss in incomplete.items():
+            right.append(f"  {v:<10} absent from {', '.join(miss)}")
+    else:
+        right.append("  none — every field is present in every case that has run")
+    right += ["", "Records dropped as partial years", "",
+              "  picontrol 1850 and 4xCO2_noh 2051 are 11-month",
+              "  means (January missing), so the common window",
+              "  starts at 2052."]
+    fig.text(0.52, 0.83, "\n".join(right), fontsize=9.5, color=TEXT_PRIMARY,
+             va="top", family="monospace", linespacing=1.6)
+
+    fig.text(0.06, 0.06, "Each field gets an absolute page followed by an anomaly page, "
+             "alphabetically. A field archived only by the control gets no anomaly page.",
+             fontsize=8.5, color=TEXT_SECONDARY)
+    return fig
 
 
 def book_pages(variables: list[str], **kwargs) -> Iterator[plt.Figure]:
@@ -114,7 +195,9 @@ def book_pages(variables: list[str], **kwargs) -> Iterator[plt.Figure]:
     Variables are always alphabetised, whatever order they were requested in, so
     a book has one predictable order and pages stay findable as fields are added.
     Each variable keeps its absolute page immediately followed by its anomaly
-    page — the pairing is never split.
+    page — the pairing is never split. The coverage page leads.
     """
-    for var in sorted(variables):
+    variables = sorted(variables)
+    yield status_page(variables)
+    for var in variables:
         yield from pages(var, **kwargs)

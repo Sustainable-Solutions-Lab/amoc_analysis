@@ -40,6 +40,24 @@ def var_path(case: Case | str, var: str) -> Path:
     return _as_case(case).path / f"{var}{FILE_SUFFIX}"
 
 
+def all_variables() -> list[str]:
+    """Every variable archived by at least one case that has run.
+
+    The union, not the intersection: `TREFHT` exists only in `picontrol`, and a
+    field present in some runs is still worth plotting for those runs.
+    """
+    from .config import available_cases
+
+    return sorted(set().union(*(set(variables_in(c)) for c in available_cases())))
+
+
+def cases_with(var: str) -> list[Case]:
+    """Available cases that archive this variable."""
+    from .config import available_cases
+
+    return [c for c in available_cases() if var in variables_in(c)]
+
+
 def _year_span_days(ds: xr.Dataset) -> np.ndarray:
     """Length in days of each annual-mean interval, from time_bnds."""
     bnds = ds["time_bnds"].values

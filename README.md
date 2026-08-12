@@ -128,10 +128,17 @@ hosing levels, and cases that have not run render as labeled placeholders.
 ### Making a book
 
 ```bash
-python scripts/make_steady_state_book.py RHREFHT          # → data/output/books/
-python scripts/make_steady_state_book.py TREFMXAV PRECT --png
-python scripts/make_steady_state_book.py --all            # every common variable
+python scripts/make_steady_state_book.py RHREFHT PRECT CLDTOT
+python scripts/make_steady_state_book.py TREFMXAV --png    # also write page PNGs
+python scripts/make_steady_state_book.py --all             # every common variable
+python scripts/make_steady_state_book.py --all --name draft   # fixed name instead
 ```
+
+Books land in `data/output/books/` as
+`steady_state_book_<yyyy-mm-dd-hh-mm-ss>.pdf`. The timestamp means successive
+runs accumulate rather than overwrite: a book records what the data looked like
+when it was built, and cases are still arriving. `--name` overrides the stem when
+you want a stable filename.
 
 Two pages per variable: the absolute climatology on a shared sequential scale,
 then the anomaly vs. `picontrol` on a shared diverging scale.

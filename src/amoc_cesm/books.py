@@ -14,13 +14,15 @@ def write_book(
     path: Path,
     png_dir: Path | None = None,
     dpi: int = 200,
-) -> Path:
-    """Write figures to a multi-page PDF, closing each as it is consumed.
+) -> int:
+    """Write figures to a multi-page PDF, returning the page count.
 
     ``pages`` may be a generator, so a 39-variable book never holds more than
-    one figure in memory. Pass ``png_dir`` to also drop each page as a PNG for
-    quick review.
+    one figure in memory — which is also why the count is returned rather than
+    taken from ``len()`` up front. Pass ``png_dir`` to also drop each page as a
+    PNG for quick review.
     """
+    n = 0
     path.parent.mkdir(parents=True, exist_ok=True)
     if png_dir is not None:
         png_dir.mkdir(parents=True, exist_ok=True)
@@ -31,7 +33,8 @@ def write_book(
             if png_dir is not None:
                 fig.savefig(png_dir / f"{path.stem}_p{n}.png", dpi=dpi)
             plt.close(fig)
-    return path
+            n += 1
+    return n
 
 
 def chain(*page_groups: Iterable[plt.Figure]) -> Iterator[plt.Figure]:

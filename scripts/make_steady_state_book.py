@@ -3,7 +3,7 @@
 
     python scripts/make_steady_state_book.py RHREFHT
     python scripts/make_steady_state_book.py TREFMXAV PRECT --png
-    python scripts/make_steady_state_book.py --all
+    python scripts/make_steady_state_book.py            # every available field
 """
 
 from __future__ import annotations
@@ -16,21 +16,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from amoc_cesm.books import write_book  # noqa: E402
-from amoc_cesm.config import OUTPUT_DIR, available_cases  # noqa: E402
-from amoc_cesm.io import variables_in  # noqa: E402
+from amoc_cesm.config import OUTPUT_DIR  # noqa: E402
+from amoc_cesm.io import all_variables  # noqa: E402
 from amoc_cesm.workflows import steady_state  # noqa: E402
-
-
-def common_variables() -> list[str]:
-    """Variables present in every available case."""
-    per_case = [set(variables_in(c)) for c in available_cases()]
-    return sorted(set.intersection(*per_case))
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("variables", nargs="*", help="variable names, e.g. RHREFHT")
-    parser.add_argument("--all", action="store_true", help="every variable common to all cases")
+    parser.add_argument(
+        "variables", nargs="*",
+        help="variable names to include; default is every field any case archives",
+    )
     parser.add_argument("--png", action="store_true", help="also write each page as a PNG")
     parser.add_argument(
         "--significance-style", choices=["field", "outline"], default="field",
@@ -44,9 +40,7 @@ def main() -> None:
     parser.add_argument("--no-fdr", action="store_true", help="skip Benjamini-Hochberg control")
     args = parser.parse_args()
 
-    variables = common_variables() if args.all else sorted(args.variables)
-    if not variables:
-        parser.error("name at least one variable, or pass --all")
+    variables = sorted(args.variables) if args.variables else all_variables()
 
     # Timestamped by default so successive runs accumulate rather than
     # overwrite — a book is a record of what the data looked like when it was
@@ -60,8 +54,8 @@ def main() -> None:
         alpha=args.alpha,
         false_discovery_rate=not args.no_fdr,
     )
-    write_book(pages, path, png_dir=path.parent if args.png else None)
-    print(f"wrote {path}  ({2 * len(variables)} pages)")
+    n_pages = write_book(pages, path, png_dir=path.parent if args.png else None)
+    print(f"wrote {path}  ({n_pages} pages)")
     print(f"  {len(variables)} variables: {', '.join(variables)}")
 
 
