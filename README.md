@@ -96,14 +96,78 @@ python -m venv .venv          # already created
 
 ```
 src/amoc_cesm/     importable package
-  config.py        paths, Case registry for the 3x3 design
+  config.py        paths, Case registry for the 3x3 design, analysis windows
   io.py            loading, area-weighted means, climatologies
-scripts/           runnable analysis scripts
-  inventory.py     what cases/variables/years are on disk
-figures/           generated figures (not committed)
-output/            generated tables and derived data (not committed)
-data/              input NetCDF (not committed)
+  analysis.py      transient and steady-state anomalies
+  significance.py  Welch t-test vs. the control, optional FDR control
+  variables.py     display units, scaling, colormaps, unit-error assertions
+  plotting.py      the 3x3 grid page: Robinson maps + zonal-mean sidebars
+  books.py         multi-page PDF assembly
+  workflows/
+    steady_state.py  quasi-steady-state workflow (pages now, tables later)
+    transient.py     time-dependent workflow (to be built)
+scripts/           runnable entry points
+  inventory.py               what cases/variables/years are on disk
+  make_steady_state_book.py  build the quasi-steady-state PDF book
+data/input/        input NetCDF (not committed)
+data/output/       generated books, figures, tables (not committed)
 ```
+
+## Two analysis workflows
+
+Everything below the reduction step is shared: `plotting.grid_3x3` takes a dict
+of `{(co2, hosing): DataArray}` and knows nothing about which analysis produced
+it, so both workflows draw the same 3×3 page — rows are CO₂ levels, columns are
+hosing levels, and cases that have not run render as labeled placeholders.
+
+- **Quasi-steady-state** (`workflows/steady_state.py`) — the 2101–2150 mean of
+  each run treated as an equilibrium climate. Built.
+- **Time-dependent** (`workflows/transient.py`) — year-for-year against the
+  control. To be built; it adds only its own reductions.
+
+### Making a book
+
+```bash
+python scripts/make_steady_state_book.py RHREFHT          # → data/output/books/
+python scripts/make_steady_state_book.py TREFMXAV PRECT --png
+python scripts/make_steady_state_book.py --all            # every common variable
+```
+
+Two pages per variable: the absolute climatology on a shared sequential scale,
+then the anomaly vs. `picontrol` on a shared diverging scale.
+
+**Page order is always alphabetical by variable**, whatever order they were
+requested in, with each variable's absolute and anomaly pages kept adjacent. The
+pairing is never split, so a book stays navigable as fields are added — the
+sorting lives in `workflows.steady_state.book_pages`, so future workflows that
+reuse it inherit the same rule.
+
+**Significance** is a Welch t-test on the 50 annual values at each grid point,
+Benjamini-Hochberg controlled by default (testing ~14k points at α = 0.05 would
+otherwise yield ~700 false positives). It is shown as **black contours over a
+color field that covers the whole map** — nothing is masked or stippled away:
+
+- `--significance-style field` (default) contours the anomaly at **the
+  colorbar's own labeled values**, drawn only where the difference is
+  significant. Contour levels and colorbar ticks come from one shared array
+  (`plotting.tick_levels`), so a line always sits exactly on a labeled value.
+  Zero is excluded — a zero contour traces a sign change rather than a
+  magnitude. Negative contours are dashed, so sign reads without the color.
+- `--significance-style outline` instead traces the boundary of significant
+  regions, saying where the signal is trustworthy but nothing about its size.
+
+Anomaly color limits are the 98th percentile of |anomaly|, not the maximum, so a
+few extreme polar cells don't wash out the pattern; the colorbar carries extend
+arrows showing values run past both ends.
+
+### Units are asserted, not assumed
+
+`variables.py` is the authority on units because file metadata is not reliable —
+`RHREFHT` is labeled `fraction` but holds percent, and all `PREC*` rates are m/s.
+Each variable carries an expected range *and* an expected global mean, both
+asserted after scaling. Two checks are needed: dividing RH by 100 leaves every
+value inside a valid 0–130 % range, and only the mean reveals the error. All 39
+variables pass their own checks on the real data.
 
 ## Usage
 

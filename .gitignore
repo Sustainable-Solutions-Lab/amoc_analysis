@@ -1,13 +1,10 @@
-# Data — never commit (large NetCDF files)
+# Data — never commit. Covers both the input NetCDF and everything generated
+# into data/output (books, figures, tables), all of which is regenerable.
 data/
 *.nc
 *.nc4
 *.grb
 *.zarr/
-
-# Outputs (regenerable)
-figures/
-output/
 
 # Python
 .venv/

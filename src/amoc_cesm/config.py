@@ -7,8 +7,11 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DATA_ROOT = REPO_ROOT / "data" / "input" / "Annual_Mean_2D_Fileds_ATMs"
-FIGURE_DIR = REPO_ROOT / "figures"
-OUTPUT_DIR = REPO_ROOT / "output"
+
+# Results live under data/ alongside the inputs, and so are covered by the same
+# .gitignore rule — generated output never reaches the repository.
+OUTPUT_DIR = REPO_ROOT / "data" / "output"
+FIGURE_DIR = OUTPUT_DIR / "figures"
 
 FILE_SUFFIX = "_ann_mean.nc"
 
