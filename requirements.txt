@@ -1,0 +1,16 @@
+# Core numerics / data
+numpy
+scipy
+pandas
+xarray
+netCDF4
+dask
+
+# Plotting
+matplotlib
+cartopy
+nc-time-axis
+
+# Notebooks / interactive (optional but handy)
+jupyterlab
+ipykernel
