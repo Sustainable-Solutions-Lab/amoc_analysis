@@ -16,14 +16,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import xarray as xr  # noqa: E402
 
 from amoc_cesm.config import CASES, CO2_LEVELS, HOSING_LEVELS, get_case  # noqa: E402
-from amoc_cesm.io import var_path, variables_in  # noqa: E402
+from amoc_cesm.io import FULL_YEAR_DAYS, var_path, variables_in  # noqa: E402
 
 
 def time_span(case, var: str) -> str:
     try:
         with xr.open_dataset(var_path(case, var), decode_times=True) as ds:
-            t = ds["time"]
-            return f"{len(t)} yr ({str(t.values[0])[:4]}-{str(t.values[-1])[:4]})"
+            years = ds["time"].dt.year.values
+        with xr.open_dataset(var_path(case, var), decode_times=False) as ds:
+            spans = ds["time_bnds"].values[:, 1] - ds["time_bnds"].values[:, 0]
+        partial = years[spans < FULL_YEAR_DAYS]
+        note = f"  partial: {', '.join(str(y) for y in partial)}" if len(partial) else ""
+        return f"{len(years)} yr ({years[0]}-{years[-1]}){note}"
     except Exception as exc:  # pragma: no cover - diagnostic path
         return f"unreadable ({exc})"
 

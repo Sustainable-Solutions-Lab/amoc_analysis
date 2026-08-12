@@ -1,4 +1,14 @@
-"""Loading and basic reduction of the annual-mean 2D CAM fields."""
+"""Loading and basic reduction of the annual-mean 2D CAM fields.
+
+All cases share the same 365-day calendar and the same annual time stamps: the
+perturbation runs cover model years 2051-2150, which are also the last 100 years
+of the 301-year `picontrol` record. Loading indexes by integer calendar `year`
+by default, so cases align directly under xarray arithmetic.
+
+Note that year alignment is bookkeeping, not pairing: the perturbation runs are
+branches, so their weather is uncorrelated with `picontrol` in the same year.
+Difference time means, not individual years.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +18,9 @@ import numpy as np
 import xarray as xr
 
 from .config import FILE_SUFFIX, Case, get_case_by_name
+
+#: Annual means shorter than this many days are partial years (see below).
+FULL_YEAR_DAYS = 360
 
 
 def _as_case(case: Case | str) -> Case:
@@ -29,23 +42,111 @@ def var_path(case: Case | str, var: str) -> Path:
     return _as_case(case).path / f"{var}{FILE_SUFFIX}"
 
 
-def load_var(case: Case | str, var: str, **kwargs) -> xr.DataArray:
-    """Load one variable for one case as a (time, lat, lon) DataArray."""
+def _year_span_days(ds: xr.Dataset) -> np.ndarray | None:
+    """Length in days of each annual-mean interval, from time_bnds."""
+    if "time_bnds" not in ds:
+        return None
+    bnds = ds["time_bnds"].values
+    return np.asarray(bnds[:, 1] - bnds[:, 0], dtype=float)
+
+
+def load_var(
+    case: Case | str,
+    var: str,
+    index_by: str = "year",
+    drop_partial: bool = True,
+    **kwargs,
+) -> xr.DataArray:
+    """Load one variable for one case.
+
+    Parameters
+    ----------
+    index_by
+        ``"year"`` (default) replaces the time dimension with an integer
+        ``year`` coordinate so cases align across the ensemble; ``"time"``
+        keeps the original cftime axis.
+    drop_partial
+        Drop leading/trailing records whose ``time_bnds`` span less than
+        ``FULL_YEAR_DAYS``. Two such records exist: `picontrol` year 1850 and
+        `4xCO2_noh` year 2051 are both 11-month means (January missing), so
+        their values are biased by the omitted month.
+    """
     case = _as_case(case)
     path = var_path(case, var)
     if not path.exists():
         raise FileNotFoundError(f"{var} not available for case {case.name}: {path}")
+
     ds = xr.open_dataset(path, **kwargs)
+    spans = _year_span_days(xr.open_dataset(path, decode_times=False))
+
     da = ds[var]
-    da.attrs.setdefault("case", case.name)
+    years = da["time"].dt.year.values
+    da = da.assign_coords(year=("time", years))
+
+    if drop_partial and spans is not None:
+        keep = spans >= FULL_YEAR_DAYS
+        if not keep.all():
+            dropped = years[~keep]
+            da = da.isel(time=np.flatnonzero(keep))
+            da.attrs["dropped_partial_years"] = ", ".join(str(y) for y in dropped)
+
+    if index_by == "year":
+        da = da.swap_dims({"time": "year"})
+    elif index_by != "time":
+        raise ValueError(f"index_by must be 'year' or 'time', got {index_by!r}")
+
+    da.attrs["case"] = case.name
+    da.attrs["co2"] = case.co2
+    da.attrs["hosing_Sv"] = case.hosing
     return da
 
 
-def load_case(case: Case | str, variables: list[str] | None = None) -> xr.Dataset:
+def load_case(
+    case: Case | str,
+    variables: list[str] | None = None,
+    **kwargs,
+) -> xr.Dataset:
     """Load several variables for one case into a single Dataset."""
     case = _as_case(case)
     variables = variables if variables is not None else variables_in(case)
-    return xr.merge([load_var(case, v) for v in variables], compat="override")
+    return xr.merge(
+        [load_var(case, v, **kwargs) for v in variables], compat="override"
+    )
+
+
+def load_ensemble(
+    var: str,
+    cases: list[Case | str] | None = None,
+    years: slice | None = None,
+    **kwargs,
+) -> xr.DataArray:
+    """Stack one variable across cases along a new ``case`` dimension.
+
+    Cases are aligned on `year`; use ``years`` to restrict to a common span
+    (e.g. ``slice(2051, 2150)``). Without it, years present in only some cases
+    are filled with NaN.
+    """
+    from .config import available_cases
+
+    case_objs = [_as_case(c) for c in (cases if cases is not None else available_cases())]
+    das = []
+    for case in case_objs:
+        da = load_var(case, var, index_by="year", **kwargs)
+        if years is not None:
+            da = da.sel(year=years)
+        das.append(da.drop_vars("time", errors="ignore"))
+    out = xr.concat(das, dim=xr.DataArray([c.name for c in case_objs], dims="case", name="case"))
+    out = out.assign_coords(
+        co2=("case", [c.co2 for c in case_objs]),
+        hosing=("case", [c.hosing for c in case_objs]),
+    )
+    return out
+
+
+def common_years(*das: xr.DataArray) -> np.ndarray:
+    """Calendar years present in every one of the given arrays."""
+    sets = [set(np.asarray(d["year"].values).tolist()) for d in das]
+    return np.array(sorted(set.intersection(*sets)))
 
 
 def area_weights(da: xr.DataArray) -> xr.DataArray:
@@ -55,11 +156,22 @@ def area_weights(da: xr.DataArray) -> xr.DataArray:
 
 def global_mean(da: xr.DataArray) -> xr.DataArray:
     """Area-weighted mean over lat/lon, preserving remaining dimensions."""
-    return da.weighted(area_weights(da)).mean(dim=("lat", "lon"))
+    return da.weighted(area_weights(da)).mean(dim=("lat", "lon"), keep_attrs=True)
 
 
-def climatology(da: xr.DataArray, last_n_years: int | None = None) -> xr.DataArray:
-    """Time mean, optionally over only the last ``last_n_years`` years."""
+def climatology(
+    da: xr.DataArray,
+    years: slice | None = None,
+    last_n_years: int | None = None,
+) -> xr.DataArray:
+    """Mean over the year (or time) dimension, optionally over a subset.
+
+    ``years`` selects a calendar-year range (requires year indexing);
+    ``last_n_years`` takes the final N records instead.
+    """
+    dim = "year" if "year" in da.dims else "time"
+    if years is not None:
+        da = da.sel({dim: years})
     if last_n_years is not None:
-        da = da.isel(time=slice(-last_n_years, None))
-    return da.mean(dim="time", keep_attrs=True)
+        da = da.isel({dim: slice(-last_n_years, None)})
+    return da.mean(dim=dim, keep_attrs=True)

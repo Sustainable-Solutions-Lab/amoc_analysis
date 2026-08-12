@@ -38,6 +38,28 @@ volume, 2.5°×1.9°), as `(time, lat, lon)` annual means, `365_day` calendar.
 - `picontrol`: 301 years (1850–2150), usable as a control and for internal
   variability / significance testing.
 
+### Time axes are already aligned
+
+All cases share the same 365-day calendar and the same annual time stamps, and
+the perturbation years 2051–2150 are exactly the last 100 years of `picontrol`
+(raw values identical to the day). Loading therefore replaces `time` with an
+integer `year` coordinate by default, so cases difference directly:
+
+```python
+load_var("4xCO2_noh", "FLUT") - load_var("picontrol", "FLUT")   # aligns on year
+```
+
+Two records are **11-month means with January missing** (`time_bnds` span 334
+days rather than 365): `picontrol` 1850 and `4xCO2_noh` 2051. `load_var` drops
+them by default (`drop_partial=True`), which leaves 2052–2150 as the span common
+to every case. The `4xCO2_noh` gap is in all 38 of its variables, so it is a
+property of the run's archive, not of one file.
+
+Year alignment is bookkeeping, not pairing: the perturbation runs are branches of
+`picontrol`, so their weather is uncorrelated with the control in the same
+calendar year. Difference time means rather than individual years — pairing buys
+no noise cancellation.
+
 39 variables are available (radiation, clouds, precipitation, surface fluxes,
 near-surface temperature and humidity). `TREFHT` is currently present only in
 `picontrol` — the perturbation cases carry `TREFMNAV`/`TREFMXAV` but not the
@@ -68,8 +90,13 @@ data/              input NetCDF (not committed)
 ```python
 import sys; sys.path.insert(0, "src")
 from amoc_cesm import get_case, load_var, global_mean, climatology
+from amoc_cesm.io import load_ensemble
 
+# one case, last 50 years
 case = get_case(co2=4, hosing=-0.3)
-lhflx = load_var(case, "LHFLX")
-print(float(global_mean(climatology(lhflx, last_n_years=50))))
+print(float(global_mean(climatology(load_var(case, "LHFLX"), years=slice(2101, 2150)))))
+
+# every available case stacked on a `case` dimension, with co2/hosing coords
+ens = load_ensemble("FLUT", years=slice(2052, 2150))
+print(global_mean(ens).mean("year"))
 ```
