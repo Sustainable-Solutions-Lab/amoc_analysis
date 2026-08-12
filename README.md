@@ -55,10 +55,30 @@ them by default (`drop_partial=True`), which leaves 2052–2150 as the span comm
 to every case. The `4xCO2_noh` gap is in all 38 of its variables, so it is a
 property of the run's archive, not of one file.
 
-Year alignment is bookkeeping, not pairing: the perturbation runs are branches of
-`picontrol`, so their weather is uncorrelated with the control in the same
-calendar year. Difference time means rather than individual years — pairing buys
-no noise cancellation.
+### Analysis windows
+
+`ANALYSIS_YEARS = 2052-2150` is the window common to every case, and is the
+default for all loading — including `picontrol`, which is trimmed to these same
+years rather than averaged over its full record. Same-year weather is
+uncorrelated across branches, so this cancels no noise; the reason to match years
+is slow transient drift in the ocean, which is shared with the control over the
+same span and therefore differences out. Pass `years=None` to recover the full
+1851–2150 control, e.g. for internal-variability statistics.
+
+`STEADY_STATE_YEARS = 2101-2150` — the last 50 years of every simulation — is the
+quasi-steady-state window for the factorial comparisons.
+
+Two differencing modes, in `amoc_cesm.analysis`:
+
+```python
+transient_anomaly("4xCO2_noh", "TREFMXAV")       # year for year vs. picontrol
+steady_state_anomaly("4xCO2_noh", "TREFMXAV")    # last-50-year means, differenced
+steady_state("4xCO2_noh", "TREFMXAV")            # last-50-year mean, no reference
+```
+
+Both take `reference=` to compare against any case, not just the control.
+
+**`4xCO2_noh` is a placeholder** to be replaced when the final run is available.
 
 39 variables are available (radiation, clouds, precipitation, surface fluxes,
 near-surface temperature and humidity). `TREFHT` is currently present only in

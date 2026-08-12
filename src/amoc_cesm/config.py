@@ -15,6 +15,16 @@ FILE_SUFFIX = "_ann_mean.nc"
 CO2_LEVELS = (1, 2, 4)          # multiples of pre-industrial CO2
 HOSING_LEVELS = (-0.3, 0.0, 0.3)  # Sv of North Atlantic freshwater hosing
 
+# Analysis window shared by every case, in model years. The perturbation runs
+# cover 2051-2150; 2051 is dropped because 4xCO2_noh archives it as an 11-month
+# mean. picontrol is restricted to this same window rather than its full 1850-
+# 2150 record: the control is not stationary, and slow ocean drift would
+# otherwise alias into the differences.
+ANALYSIS_YEARS = slice(2052, 2150)
+
+# Quasi-steady-state window: the last 50 years of every simulation.
+STEADY_STATE_YEARS = slice(2101, 2150)
+
 
 @dataclass(frozen=True)
 class Case:
