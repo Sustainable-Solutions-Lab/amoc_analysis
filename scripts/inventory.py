@@ -20,16 +20,13 @@ from amoc_cesm.io import FULL_YEAR_DAYS, var_path, variables_in  # noqa: E402
 
 
 def time_span(case, var: str) -> str:
-    try:
-        with xr.open_dataset(var_path(case, var), decode_times=True) as ds:
-            years = ds["time"].dt.year.values
-        with xr.open_dataset(var_path(case, var), decode_times=False) as ds:
-            spans = ds["time_bnds"].values[:, 1] - ds["time_bnds"].values[:, 0]
-        partial = years[spans < FULL_YEAR_DAYS]
-        note = f"  partial: {', '.join(str(y) for y in partial)}" if len(partial) else ""
-        return f"{len(years)} yr ({years[0]}-{years[-1]}){note}"
-    except Exception as exc:  # pragma: no cover - diagnostic path
-        return f"unreadable ({exc})"
+    with xr.open_dataset(var_path(case, var), decode_times=True) as ds:
+        years = ds["time"].dt.year.values
+    with xr.open_dataset(var_path(case, var), decode_times=False) as ds:
+        spans = ds["time_bnds"].values[:, 1] - ds["time_bnds"].values[:, 0]
+    partial = years[spans < FULL_YEAR_DAYS]
+    note = f"  partial: {', '.join(str(y) for y in partial)}" if len(partial) else ""
+    return f"{len(years)} yr ({years[0]}-{years[-1]}){note}"
 
 
 def main() -> None:

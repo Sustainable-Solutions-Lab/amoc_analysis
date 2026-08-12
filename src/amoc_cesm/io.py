@@ -30,8 +30,6 @@ def _as_case(case: Case | str) -> Case:
 def variables_in(case: Case | str) -> list[str]:
     """Variable names available for a case, from its file names."""
     case = _as_case(case)
-    if not case.exists:
-        return []
     return sorted(
         p.name[: -len(FILE_SUFFIX)]
         for p in case.path.glob(f"*{FILE_SUFFIX}")
@@ -42,10 +40,8 @@ def var_path(case: Case | str, var: str) -> Path:
     return _as_case(case).path / f"{var}{FILE_SUFFIX}"
 
 
-def _year_span_days(ds: xr.Dataset) -> np.ndarray | None:
+def _year_span_days(ds: xr.Dataset) -> np.ndarray:
     """Length in days of each annual-mean interval, from time_bnds."""
-    if "time_bnds" not in ds:
-        return None
     bnds = ds["time_bnds"].values
     return np.asarray(bnds[:, 1] - bnds[:, 0], dtype=float)
 
@@ -79,20 +75,14 @@ def load_var(
     """
     case = _as_case(case)
     path = var_path(case, var)
-    if not path.exists():
-        raise FileNotFoundError(f"{var} not available for case {case.name}: {path}")
-
     ds = xr.open_dataset(path, **kwargs)
     spans = _year_span_days(xr.open_dataset(path, decode_times=False))
-
-    if index_by not in ("year", "time"):
-        raise ValueError(f"index_by must be 'year' or 'time', got {index_by!r}")
 
     da = ds[var]
     file_years = da["time"].dt.year.values
     da = da.assign_coords(year=("time", file_years))
 
-    if drop_partial and spans is not None:
+    if drop_partial:
         keep = spans >= FULL_YEAR_DAYS
         if not keep.all():
             dropped = file_years[~keep]
@@ -119,8 +109,13 @@ def load_case(
     """Load several variables for one case into a single Dataset."""
     case = _as_case(case)
     variables = variables if variables is not None else variables_in(case)
+    # Strict on purpose: every file for a case must be on the same grid and the
+    # same years. compat="equals" fails on conflicting coordinate values,
+    # join="exact" fails on misaligned indexes instead of NaN-padding them.
     return xr.merge(
-        [load_var(case, v, **kwargs) for v in variables], compat="override"
+        [load_var(case, v, **kwargs) for v in variables],
+        compat="equals",
+        join="exact",
     )
 
 
@@ -139,9 +134,7 @@ def load_ensemble(
 
     case_objs = [_as_case(c) for c in (cases if cases is not None else available_cases())]
     das = [
-        load_var(case, var, years=years, index_by="year", **kwargs).drop_vars(
-            "time", errors="ignore"
-        )
+        load_var(case, var, years=years, index_by="year", **kwargs).drop_vars("time")
         for case in case_objs
     ]
     out = xr.concat(das, dim=xr.DataArray([c.name for c in case_objs], dims="case", name="case"))
