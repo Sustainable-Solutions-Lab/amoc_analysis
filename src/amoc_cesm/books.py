@@ -33,8 +33,7 @@ def write_book(
             if png_dir is not None:
                 fig.savefig(png_dir / f"{path.stem}_p{n}.png", dpi=dpi)
             plt.close(fig)
-            n += 1
-    return n
+    return n  # enumerate starts at 1, so this is the page count
 
 
 def chain(*page_groups: Iterable[plt.Figure]) -> Iterator[plt.Figure]:

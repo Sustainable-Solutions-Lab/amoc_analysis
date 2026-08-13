@@ -140,14 +140,39 @@ runs accumulate rather than overwrite: a book records what the data looked like
 when it was built, and cases are still arriving. `--name` overrides the stem when
 you want a stable filename.
 
-Two pages per variable: the absolute climatology on a shared sequential scale,
-then the anomaly vs. `picontrol` on a shared diverging scale.
+**Four pages per variable**, each on its own color scale:
+
+| page | what it shows | reference for each panel |
+|---|---|---|
+| absolute | climatology, shared sequential scale | — |
+| anomaly | total response to both perturbations | `picontrol` |
+| **warming effect** | CO₂ response with the AMOC state held | 1×CO₂ in the *same column* |
+| **AMOC effect** | hosing response with forcing held | no-hosing in the *same row* |
+
+The last two are what separate the effects. On the warming page, reading down a
+column shows the CO₂ response growing; reading *across* a row shows whether that
+response depends on the AMOC state — which is the interaction. The AMOC page is
+the same idea transposed. Reference panels (the 1×CO₂ row, the 0 Sv column) are
+zero by construction and stay in place labeled as such, so every page in the
+book keeps the same 3×3 skeleton and panels never move.
+
+The two effects differ by roughly a factor of ten for some fields, so each page
+computes its own symmetric scale rather than sharing one that would flatten the
+smaller effect.
 
 **Page order is always alphabetical by variable**, whatever order they were
 requested in, with each variable's absolute and anomaly pages kept adjacent. The
 pairing is never split, so a book stays navigable as fields are added — the
 sorting lives in `workflows.steady_state.book_pages`, so future workflows that
 reuse it inherit the same rule.
+
+**Contours** are drawn on every page at the colorbar's own labeled values
+(`plotting.tick_levels` feeds both, so a line always sits on a labeled value).
+On absolute pages they cover the whole panel and no statistics are involved — a
+contour there is just an isoline, and the zero level is kept because a field like
+`SHFLX` genuinely crosses zero. On the three difference pages the zero level is
+dropped (it would trace a sign change, not a magnitude) and the lines are clipped
+to significant regions.
 
 **Significance** is a Welch t-test on the 50 annual values at each grid point,
 Benjamini-Hochberg controlled by default (testing ~14k points at α = 0.05 would

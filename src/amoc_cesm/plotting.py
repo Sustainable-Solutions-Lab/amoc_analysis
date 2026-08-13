@@ -12,7 +12,6 @@ import cartopy.feature as cfeature
 import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
-from cartopy.util import add_cyclic_point
 from matplotlib import ticker
 
 from .config import CO2_LEVELS, HOSING_LEVELS, get_case
@@ -56,10 +55,50 @@ def hosing_label(hosing: float) -> str:
     return "0 Sv" if hosing == 0.0 else f"{hosing:+.1f} Sv"
 
 
-def _cyclic(da: xr.DataArray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Close the 0/357.5 longitude seam, which would otherwise show as a gap."""
-    values, lon = add_cyclic_point(da.values, coord=da["lon"].values)
-    return values, lon, da["lat"].values
+def _cell_edges(centers: np.ndarray) -> np.ndarray:
+    """Cell boundaries midway between centers, extrapolated at both ends.
+
+    The CAM FV grid has half-width cells at the poles, and this reproduces them:
+    the first and last centers sit on the boundary, so their cells extend only
+    half a spacing inward.
+    """
+    mid = (centers[:-1] + centers[1:]) / 2
+    return np.concatenate([
+        [centers[0] - (mid[0] - centers[0])], mid,
+        [centers[-1] + (centers[-1] - mid[-1])],
+    ])
+
+
+_MESH_CACHE: dict[bytes, tuple] = {}
+
+
+def _projected_mesh(lon: np.ndarray, lat: np.ndarray) -> tuple:
+    """Project the grid into map coordinates once and reuse it for every panel.
+
+    Passing ``transform=`` to pcolormesh makes cartopy re-project the mesh on
+    every call — 1.4 s a panel, which dominated the whole book. The grid is
+    identical for every panel of every page, so it is projected once here and
+    the panels draw in native coordinates. Verified pixel-identical to the
+    transform path everywhere except antialiasing on the map outline.
+
+    Longitudes are rotated to -180..180 so no cell straddles the projection
+    boundary, and the dateline column is repeated at -180 so both trimmed
+    half-cells there carry the data that genuinely spans the seam.
+
+    Returns projected edge coordinates plus the column index to apply to data.
+    """
+    key = lon.tobytes() + lat.tobytes()
+    if key not in _MESH_CACHE:
+        shifted = np.where(lon > 180, lon - 360, lon)
+        order = np.argsort(shifted)
+        reindex = np.concatenate([[order[-1]], order])
+        lon_centers = np.concatenate([[shifted[order][-1] - 360], shifted[order]])
+
+        lon_e = np.clip(_cell_edges(lon_centers), -180, 180)
+        lat_e = np.clip(_cell_edges(lat), -90, 90)
+        xyz = MAP_PROJECTION.transform_points(DATA_CRS, *np.meshgrid(lon_e, lat_e))
+        _MESH_CACHE[key] = (xyz[..., 0], xyz[..., 1], reindex, lon_centers)
+    return _MESH_CACHE[key]
 
 
 def _draw_map(
@@ -72,17 +111,16 @@ def _draw_map(
     significance_style: str,
     contour_levels: np.ndarray | None,
 ) -> object:
-    values, lon, lat = _cyclic(da)
+    x, y, reindex, _ = _projected_mesh(da["lon"].values, da["lat"].values)
     ax.set_global()
     mesh = ax.pcolormesh(
-        lon, lat, values,
-        transform=DATA_CRS, cmap=cmap, vmin=vmin, vmax=vmax,
-        shading="auto", rasterized=True,
+        x, y, da.values[:, reindex],
+        cmap=cmap, vmin=vmin, vmax=vmax, shading="flat", rasterized=True,
     )
     ax.add_feature(cfeature.COASTLINE, linewidth=0.35, edgecolor=COASTLINE)
 
-    if mask is not None:
-        _draw_significance(ax, da, mask, significance_style, contour_levels)
+    if contour_levels is not None:
+        _draw_contours(ax, da, mask, significance_style, contour_levels)
 
     ax.text(
         0.5, -0.09, f"mean {float(global_mean(da)):.4g}",
@@ -92,37 +130,42 @@ def _draw_map(
     return mesh
 
 
-def _draw_significance(ax, da, mask, style, contour_levels) -> None:
-    """Overlay black contours marking where the signal is significant.
+def _draw_contours(ax, da, mask, style, contour_levels) -> None:
+    """Black contours at the colorbar's own tick values.
 
-    ``"field"`` (default) contours the field itself at the colorbar's own tick
-    values, drawn only inside significant regions. Zero is excluded — the
-    zero contour would trace the sign change, not a magnitude, and would appear
-    wherever a field merely crosses zero. All contours are solid, overriding
-    matplotlib's dashed-for-negative default: the color already carries sign,
-    and dashes only added visual noise.
+    With no ``mask`` the lines are drawn across the whole panel — that is the
+    absolute pages, where no statistical test is involved and a contour is just
+    an isoline. With a mask, they are clipped to where the difference is
+    significant, so a line means both "this value" and "trust it".
 
-    ``"outline"`` instead traces the boundary of the significant region, which
-    says where the signal is trustworthy but nothing about its magnitude.
+    ``style="outline"`` instead traces the boundary of the significant region,
+    saying where the signal is trustworthy but nothing about its magnitude.
 
-    Either way the color field covers the whole map: significance adds lines,
-    it never masks, stipples, or hides data.
+    All contours are solid, overriding matplotlib's dashed-for-negative default:
+    the color already carries sign, and the dashes only added visual noise.
+    Either way the color field covers the whole map — contours add information,
+    they never mask, stipple, or hide data.
     """
-    if style == "outline":
-        filled, lon, lat = _cyclic(mask.astype(float))
+    x, y, reindex, _ = _projected_mesh(da["lon"].values, da["lat"].values)
+    xc, yc = _cell_centers(x), _cell_centers(y)
+
+    if style == "outline" and mask is not None:
         ax.contour(
-            lon, lat, filled, levels=[0.5],
-            colors="black", linewidths=0.5, transform=DATA_CRS,
+            xc, yc, mask.values[:, reindex].astype(float), levels=[0.5],
+            colors="black", linewidths=0.5,
         )
-    elif style == "field":
-        masked = da.where(mask)
-        values, lon, lat = _cyclic(masked)
-        ax.contour(
-            lon, lat, values, levels=contour_levels,
-            colors="black", linewidths=0.4, linestyles="solid", transform=DATA_CRS,
-        )
-    else:
-        raise ValueError(f"significance_style must be 'outline' or 'field', got {style!r}")
+        return
+
+    values = da.where(mask) if mask is not None else da
+    ax.contour(
+        xc, yc, values.values[:, reindex], levels=contour_levels,
+        colors="black", linewidths=0.4, linestyles="solid",
+    )
+
+
+def _cell_centers(edges: np.ndarray) -> np.ndarray:
+    """Centers of the projected cells, for contouring on the same mesh."""
+    return (edges[:-1, :-1] + edges[1:, 1:]) / 2
 
 
 def _draw_missing(ax, note: str) -> None:
@@ -180,6 +223,7 @@ def grid_3x3(
     vmax: float,
     significance: dict[tuple[int, float], xr.DataArray] | None = None,
     significance_style: str = "field",
+    drop_zero_contour: bool = True,
     annotations: dict[tuple[int, float], str] | None = None,
     missing_notes: dict[tuple[int, float], str] | None = None,
     extend: str = "neither",
@@ -201,9 +245,10 @@ def grid_3x3(
     )
 
     ticks = tick_levels(vmin, vmax)
-    # Zero is dropped: a zero contour traces where the field changes sign, not a
-    # magnitude, and would ring every panel wherever values merely cross zero.
-    contour_levels = ticks[ticks != 0] if significance_style == "field" else None
+    # On a difference field the zero contour traces where the sign changes
+    # rather than a magnitude, and would ring every panel wherever values merely
+    # cross zero. On an absolute field zero is a genuine isoline, so it is kept.
+    contour_levels = ticks[ticks != 0] if drop_zero_contour else ticks
     mesh = None
     map_axes: list = []
     zonal_axes: list = []

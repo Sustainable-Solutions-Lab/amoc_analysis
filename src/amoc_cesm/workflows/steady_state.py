@@ -1,12 +1,15 @@
 """Quasi-steady-state workflow: the last 50 years treated as an equilibrium.
 
-Each variable yields two pages — the absolute climatology across the 3x3 design,
-then the anomaly relative to `picontrol` with significance marked.
+Each variable yields four pages: the absolute climatology across the 3x3 design,
+then three differences — the total response against `picontrol`, and the two
+axes of the design taken separately, warming at fixed hosing and the AMOC at
+fixed CO2. The last two are the ones that separate the effects the project set
+out to distinguish.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -15,6 +18,7 @@ import xarray as xr
 from ..analysis import steady_state, steady_state_anomaly
 from ..config import (
     CASES,
+    Case,
     CO2_LEVELS,
     CONTROL,
     HOSING_LEVELS,
@@ -66,44 +70,75 @@ def absolute_page(var: str) -> plt.Figure:
         cmap=meta.sequential_cmap,
         vmin=vmin,
         vmax=vmax,
+        # No mask, so contours cover the whole panel: on an absolute field a
+        # contour is an isoline, not a claim about significance. Zero is kept
+        # for the same reason — SHFLX genuinely crosses zero.
+        drop_zero_contour=False,
         missing_notes=_missing_notes(var),
     )
 
 
-def anomaly_page(
+def _difference_page(
     var: str,
+    reference_for: Callable[[Case], Case],
+    title: str,
+    describe: str,
+    label: str,
     significance_style: str = "field",
     alpha: float = 0.05,
     false_discovery_rate: bool = True,
-) -> plt.Figure:
-    """Steady-state anomalies vs. the control, with significance contoured.
+) -> plt.Figure | None:
+    """One page of case-minus-reference differences, one reference per panel.
 
-    The control cell is zero by construction and is labeled as the reference
-    rather than given its own color scale — its absolute field is on page 1.
+    ``reference_for`` picks each panel's reference, which is what distinguishes
+    the three difference pages: a fixed control, the 1xCO2 case in the same
+    column, or the no-hosing case in the same row. Panels whose reference is
+    itself are zero by construction and are labeled rather than dropped, so
+    every page keeps the same 3x3 skeleton.
+
+    Returns None when nothing differs anywhere — SOLIN is the same prescribed
+    insolation in every run, so its difference pages would be blank panels under
+    an empty colorbar. That is a fact worth stating, not a page worth printing.
     """
     fields: dict[tuple[int, float], xr.DataArray] = {}
     masks: dict[tuple[int, float], xr.DataArray] = {}
+    annotations: dict[tuple[int, float], str] = {}
+    missing = _missing_notes(var)
+    archiving = cases_with(var)
 
-    for case in cases_with(var):
+    for case in archiving:
+        reference = reference_for(case)
+        if reference not in archiving:
+            missing[_key(case)] = f"{case.name}\nreference {reference.name}\nunavailable"
+            continue
         # check_range=False: these are differences, not absolute values.
         fields[_key(case)] = to_display_units(
-            steady_state_anomaly(case, var), var, check_range=False
+            steady_state_anomaly(case, var, reference=reference), var, check_range=False
         )
-        if case.name != CONTROL.name:
+        if case == reference:
+            annotations[_key(case)] = "reference (zero by construction)"
+        else:
             masks[_key(case)] = significance_mask(
-                case, var, alpha=alpha, false_discovery_rate=false_discovery_rate
+                case, var, reference=reference,
+                alpha=alpha, false_discovery_rate=false_discovery_rate,
             )
 
+    differenced = [da for key, da in fields.items() if key not in annotations]
+    if not differenced:
+        print(f"({var}: no {label} pairs available)", end=" ", flush=True)
+        return None
+
+    # Scale to the 98th percentile of |difference| rather than the maximum. A
+    # few extreme polar grid cells otherwise set the range and wash out the
+    # pattern everywhere else. Nothing is hidden: the colorbar carries extend
+    # arrows showing that values run past both ends. Reference panels are
+    # excluded because their identical zeros would drag the percentile down.
+    stacked = np.abs(np.concatenate([da.values.ravel() for da in differenced]))
+    if stacked.max() == 0.0:
+        print(f"({var} identical across {label} — no page)", end=" ", flush=True)
+        return None
+
     meta = info(var, next(iter(fields.values())))
-
-    # Scale to the 98th percentile of |anomaly| rather than the maximum. A few
-    # extreme polar grid cells otherwise set the range and wash out the pattern
-    # everywhere else. Nothing is hidden: the colorbar carries extend arrows
-    # showing that values run past both ends. The reference panel is excluded
-    # because its identical zeros would drag the percentile down.
-    perturbed = [da for key, da in fields.items() if key != _key(CONTROL)]
-    span = float(np.percentile(np.abs(np.concatenate([da.values.ravel() for da in perturbed])), 98))
-
     test = f"Welch t-test, p < {alpha}" + (", FDR controlled" if false_discovery_rate else "")
     marking = (
         "contours enclose significant regions"
@@ -113,31 +148,83 @@ def anomaly_page(
 
     return grid_3x3(
         fields,
-        title=f"{var} — anomaly vs. {CONTROL.name}",
-        subtitle=f"Quasi-steady-state mean, {WINDOW}   ·   {test} ({marking})",
+        title=title,
+        subtitle=f"{describe}   ·   {WINDOW}   ·   {test} ({marking})",
         units=f"Δ {meta.units}",
         cmap=meta.diverging_cmap,
-        vmin=-span,
-        vmax=span,
+        vmin=-float(np.percentile(stacked, 98)),
+        vmax=float(np.percentile(stacked, 98)),
         extend="both",
         significance=masks,
         significance_style=significance_style,
-        annotations={_key(CONTROL): "reference (zero by construction)"},
-        missing_notes=_missing_notes(var),
+        annotations=annotations,
+        missing_notes=missing,
+    )
+
+
+def anomaly_page(var: str, **kwargs) -> plt.Figure | None:
+    """Every case minus the control — the total response to both perturbations."""
+    return _difference_page(
+        var,
+        reference_for=lambda case: CONTROL,
+        title=f"{var} — anomaly vs. {CONTROL.name}",
+        describe=f"Each case minus {CONTROL.name}",
+        label="control anomaly",
+        **kwargs,
+    )
+
+
+def warming_effect_page(var: str, **kwargs) -> plt.Figure | None:
+    """CO2 differences at fixed hosing: warming with the AMOC state held.
+
+    Reading down a column of this page shows how the response to CO2 grows;
+    reading across a row shows whether that response depends on the AMOC state,
+    which is precisely the interaction the project is after.
+    """
+    return _difference_page(
+        var,
+        reference_for=lambda case: get_case(1, case.hosing),
+        title=f"{var} — warming effect",
+        describe="Each case minus 1xCO2 at the same hosing",
+        label="CO2",
+        **kwargs,
+    )
+
+
+def amoc_effect_page(var: str, **kwargs) -> plt.Figure | None:
+    """Hosing differences at fixed CO2: the AMOC effect with forcing held.
+
+    Reading across a row shows the response to hosing; reading down a column
+    shows whether it depends on the CO2 level.
+    """
+    return _difference_page(
+        var,
+        reference_for=lambda case: get_case(case.co2, 0.0),
+        title=f"{var} — AMOC effect",
+        describe="Each case minus no-hosing at the same CO2",
+        label="hosing",
+        **kwargs,
     )
 
 
 def pages(var: str, **kwargs) -> Iterator[plt.Figure]:
-    """The page sequence for one variable: absolute, then anomaly.
+    """The page sequence for one variable.
 
-    The anomaly page needs both the control and at least one perturbed case to
-    archive the field. `TREFHT` has only the control, so it gets an absolute
-    page alone rather than a page of empty panels.
+    Absolute climatology, then the three differences: total response against the
+    control, then the two axes of the design separated — warming at fixed
+    hosing, and the AMOC at fixed CO2.
+
+    A difference page needs at least one case-reference pair to exist. `TREFHT`
+    is archived only by the control, so it gets an absolute page alone rather
+    than three pages of empty panels.
     """
     yield absolute_page(var)
-    archiving = cases_with(var)
-    if CONTROL in archiving and len(archiving) > 1:
-        yield anomaly_page(var, **kwargs)
+    if len(cases_with(var)) < 2:
+        return
+    for build in (anomaly_page, warming_effect_page, amoc_effect_page):
+        page = build(var, **kwargs)
+        if page is not None:
+            yield page
 
 
 def status_page(variables: list[str]) -> plt.Figure:
@@ -198,6 +285,13 @@ def book_pages(variables: list[str], **kwargs) -> Iterator[plt.Figure]:
     page — the pairing is never split. The coverage page leads.
     """
     variables = sorted(variables)
+
+    # Progress goes out on one line as each field starts, since a full book is
+    # several minutes of silence otherwise. flush because stdout is block-
+    # buffered when redirected to a file.
+    print("coverage", end=" ", flush=True)
     yield status_page(variables)
     for var in variables:
+        print(var, end=" ", flush=True)
         yield from pages(var, **kwargs)
+    print()
