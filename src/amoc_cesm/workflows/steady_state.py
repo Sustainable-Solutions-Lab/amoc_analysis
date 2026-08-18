@@ -10,6 +10,7 @@ out to distinguish.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -78,27 +79,24 @@ def absolute_page(var: str) -> plt.Figure:
     )
 
 
-def _difference_page(
+def _difference_fields(
     var: str,
     reference_for: Callable[[Case], Case],
-    title: str,
-    describe: str,
     label: str,
-    significance_style: str = "field",
     alpha: float = 0.05,
     false_discovery_rate: bool = True,
-) -> plt.Figure | None:
-    """One page of case-minus-reference differences, one reference per panel.
+) -> dict | None:
+    """Load one page's worth of case-minus-reference differences.
+
+    Separated from the drawing so that the three difference pages of a variable
+    can be measured before any of them is drawn, which is what lets them share
+    one color scale. Returns None when the page would be empty.
 
     ``reference_for`` picks each panel's reference, which is what distinguishes
     the three difference pages: a fixed control, the 1xCO2 case in the same
     column, or the no-hosing case in the same row. Panels whose reference is
     itself are zero by construction and are labeled rather than dropped, so
     every page keeps the same 3x3 skeleton.
-
-    Returns None when nothing differs anywhere — SOLIN is the same prescribed
-    insolation in every run, so its difference pages would be blank panels under
-    an empty colorbar. That is a fact worth stating, not a page worth printing.
     """
     fields: dict[tuple[int, float], xr.DataArray] = {}
     masks: dict[tuple[int, float], xr.DataArray] = {}
@@ -127,18 +125,60 @@ def _difference_page(
     if not differenced:
         print(f"({var}: no {label} pairs available)", end=" ", flush=True)
         return None
-
-    # Scale to the 98th percentile of |difference| rather than the maximum. A
-    # few extreme polar grid cells otherwise set the range and wash out the
-    # pattern everywhere else. Nothing is hidden: the colorbar carries extend
-    # arrows showing that values run past both ends. Reference panels are
-    # excluded because their identical zeros would drag the percentile down.
-    stacked = np.abs(np.concatenate([da.values.ravel() for da in differenced]))
-    if stacked.max() == 0.0:
+    if max(float(np.abs(da).max()) for da in differenced) == 0.0:
         print(f"({var} identical across {label} — no page)", end=" ", flush=True)
         return None
 
-    meta = info(var, next(iter(fields.values())))
+    return {
+        "fields": fields, "masks": masks, "annotations": annotations,
+        "missing": missing, "differenced": differenced,
+    }
+
+
+def color_limit(
+    page_fields: list[dict],
+    percentile: float | None = None,
+    pad: float = 0.04,
+) -> float:
+    """One symmetric color limit covering every difference page of a variable.
+
+    The three difference pages answer three questions about the same field and
+    are meant to be read against each other: how large is the warming effect
+    beside the AMOC effect, and how much of the total response does each
+    account for. Scaling each page to its own content defeats that — a small
+    AMOC effect fills its colorbar exactly as a large warming effect fills its
+    own, and the two pages look alike.
+
+    With ``percentile=None`` the limit spans the full range of every difference
+    on every page, padded, so nothing is clipped. That is the honest scale, but
+    a handful of extreme cells on the largest page can leave the smallest page
+    almost blank; pass a percentile (98 is the usual choice) to clip instead,
+    which keeps the pages comparable while leaving detail visible on the small
+    one. The colorbar then carries extend arrows saying values run past it.
+
+    Reference panels are excluded either way: their identical zeros are an
+    artifact of the layout, not data.
+    """
+    values = [np.abs(da.values).ravel() for spec in page_fields
+              for da in spec["differenced"]]
+    pooled = np.concatenate(values)
+    largest = float(pooled.max() if percentile is None else np.percentile(pooled, percentile))
+    return largest * (1.0 + pad)
+
+
+def _difference_page(
+    spec: dict,
+    var: str,
+    title: str,
+    describe: str,
+    limit: float,
+    clipped: bool = False,
+    significance_style: str = "field",
+    alpha: float = 0.05,
+    false_discovery_rate: bool = True,
+) -> plt.Figure:
+    """Draw one difference page at a color limit chosen for the whole variable."""
+    meta = info(var, next(iter(spec["fields"].values())))
     test = f"Welch t-test, p < {alpha}" + (", FDR controlled" if false_discovery_rate else "")
     marking = (
         "contours enclose significant regions"
@@ -147,72 +187,82 @@ def _difference_page(
     )
 
     return grid_3x3(
-        fields,
+        spec["fields"],
         title=title,
         subtitle=f"{describe}   ·   {WINDOW}   ·   {test} ({marking})",
         units=f"Δ {meta.units}",
         cmap=meta.diverging_cmap,
-        vmin=-float(np.percentile(stacked, 98)),
-        vmax=float(np.percentile(stacked, 98)),
-        extend="both",
-        significance=masks,
+        vmin=-limit,
+        vmax=limit,
+        extend="both" if clipped else "neither",
+        significance=spec["masks"],
         significance_style=significance_style,
-        annotations=annotations,
-        missing_notes=missing,
+        annotations=spec["annotations"],
+        missing_notes=spec["missing"],
     )
 
 
-def anomaly_page(var: str, **kwargs) -> plt.Figure | None:
-    """Every case minus the control — the total response to both perturbations."""
-    return _difference_page(
-        var,
-        reference_for=lambda case: CONTROL,
-        title=f"{var} — anomaly vs. {CONTROL.name}",
-        describe=f"Each case minus {CONTROL.name}",
-        label="control anomaly",
-        **kwargs,
-    )
+@dataclass(frozen=True)
+class DifferencePage:
+    """One of the three differences a variable is shown through.
 
-
-def warming_effect_page(var: str, **kwargs) -> plt.Figure | None:
-    """CO2 differences at fixed hosing: warming with the AMOC state held.
-
-    Reading down a column of this page shows how the response to CO2 grows;
-    reading across a row shows whether that response depends on the AMOC state,
-    which is precisely the interaction the project is after.
+    `anomaly` is the total response to both perturbations. The other two
+    separate the axes of the design: `warming` holds the AMOC state and varies
+    CO2, `amoc` holds CO2 and varies the hosing. Reading a row of the warming
+    page shows whether the CO2 response depends on the AMOC state, which is
+    precisely the interaction the project is after.
     """
-    return _difference_page(
-        var,
-        reference_for=lambda case: get_case(1, case.hosing),
-        title=f"{var} — warming effect",
-        describe="Each case minus 1xCO2 at the same hosing",
-        label="CO2",
-        **kwargs,
-    )
+
+    key: str
+    reference_for: Callable[[Case], Case]
+    title: str
+    describe: str
+    label: str
 
 
-def amoc_effect_page(var: str, **kwargs) -> plt.Figure | None:
-    """Hosing differences at fixed CO2: the AMOC effect with forcing held.
+DIFFERENCE_PAGES: tuple[DifferencePage, ...] = (
+    DifferencePage(
+        "anomaly",
+        lambda case: CONTROL,
+        f"anomaly vs. {CONTROL.name}",
+        f"Each case minus {CONTROL.name}",
+        "control anomaly",
+    ),
+    DifferencePage(
+        "warming",
+        lambda case: get_case(1, case.hosing),
+        "warming effect",
+        "Each case minus 1xCO2 at the same hosing",
+        "CO2",
+    ),
+    DifferencePage(
+        "amoc",
+        lambda case: get_case(case.co2, 0.0),
+        "AMOC effect",
+        "Each case minus no-hosing at the same CO2",
+        "hosing",
+    ),
+)
 
-    Reading across a row shows the response to hosing; reading down a column
-    shows whether it depends on the CO2 level.
-    """
-    return _difference_page(
-        var,
-        reference_for=lambda case: get_case(case.co2, 0.0),
-        title=f"{var} — AMOC effect",
-        describe="Each case minus no-hosing at the same CO2",
-        label="hosing",
-        **kwargs,
-    )
 
-
-def pages(var: str, **kwargs) -> Iterator[plt.Figure]:
+def pages(
+    var: str,
+    significance_style: str = "field",
+    alpha: float = 0.05,
+    false_discovery_rate: bool = True,
+    color_percentile: float | None = None,
+) -> Iterator[plt.Figure]:
     """The page sequence for one variable.
 
     Absolute climatology, then the three differences: total response against the
     control, then the two axes of the design separated — warming at fixed
     hosing, and the AMOC at fixed CO2.
+
+    All three differences are loaded before any is drawn, so that one color
+    scale can be chosen for the variable as a whole. That is the point of doing
+    it here rather than inside each page: the three pages are meant to be
+    compared with each other, and per-page scaling makes a small AMOC effect
+    fill its colorbar exactly as a large warming effect fills its own.
 
     A difference page needs at least one case-reference pair to exist. `TREFHT`
     is archived only by the control, so it gets an absolute page alone rather
@@ -221,21 +271,41 @@ def pages(var: str, **kwargs) -> Iterator[plt.Figure]:
     yield absolute_page(var)
     if len(cases_with(var)) < 2:
         return
-    for build in (anomaly_page, warming_effect_page, amoc_effect_page):
-        page = build(var, **kwargs)
-        if page is not None:
-            yield page
+
+    specs = [
+        (page, _difference_fields(var, page.reference_for, page.label,
+                                  alpha=alpha, false_discovery_rate=false_discovery_rate))
+        for page in DIFFERENCE_PAGES
+    ]
+    specs = [(page, spec) for page, spec in specs if spec is not None]
+    if not specs:
+        return
+
+    limit = color_limit([spec for _, spec in specs], percentile=color_percentile)
+    for page, spec in specs:
+        yield _difference_page(
+            spec, var,
+            title=f"{var} — {page.title}",
+            describe=page.describe,
+            limit=limit,
+            clipped=color_percentile is not None,
+            significance_style=significance_style,
+            alpha=alpha,
+            false_discovery_rate=false_discovery_rate,
+        )
 
 
-def status_page(variables: list[str]) -> plt.Figure:
+def status_page(variables: list[str], volume: str | None = None) -> plt.Figure:
     """Front page: what has run, what has not, and which fields are incomplete.
 
     Seeing what is missing is one of the book's jobs, so it leads with that
     rather than leaving it to be inferred from empty panels later on.
     """
     fig = plt.figure(figsize=(13.5, 7.6))
-    fig.suptitle("Quasi-steady-state book — coverage", fontsize=14,
-                 color=TEXT_PRIMARY, x=0.06, ha="left", y=0.95)
+    heading = "Quasi-steady-state book — coverage"
+    if volume is not None:
+        heading += f"  ({volume})"
+    fig.suptitle(heading, fontsize=14, color=TEXT_PRIMARY, x=0.06, ha="left", y=0.95)
     fig.text(0.06, 0.905, f"Steady-state window {WINDOW}   ·   built from "
              f"{len(available_cases())} of {len(CASES)} cases   ·   "
              f"{len(variables)} variables", fontsize=10, color=TEXT_SECONDARY)
@@ -276,11 +346,17 @@ def status_page(variables: list[str]) -> plt.Figure:
     return fig
 
 
-def book_pages(variables: list[str], **kwargs) -> Iterator[plt.Figure]:
+def book_pages(
+    variables: list[str],
+    volume: str | None = None,
+    **kwargs,
+) -> Iterator[plt.Figure]:
     """Page sequence for a whole book, kept lazy so memory stays flat.
 
     Variables are always alphabetised, whatever order they were requested in, so
     a book has one predictable order and pages stay findable as fields are added.
+    ``volume`` is only for the coverage page's heading; splitting the variable
+    list into volumes is the caller's job.
     Each variable keeps its absolute page immediately followed by its anomaly
     page — the pairing is never split. The coverage page leads.
     """
@@ -290,7 +366,7 @@ def book_pages(variables: list[str], **kwargs) -> Iterator[plt.Figure]:
     # several minutes of silence otherwise. flush because stdout is block-
     # buffered when redirected to a file.
     print("coverage", end=" ", flush=True)
-    yield status_page(variables)
+    yield status_page(variables, volume=volume)
     for var in variables:
         print(var, end=" ", flush=True)
         yield from pages(var, **kwargs)

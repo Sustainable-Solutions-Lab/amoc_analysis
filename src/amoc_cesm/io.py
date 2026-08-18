@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 import xarray as xr
 
-from .config import ANALYSIS_YEARS, FILE_SUFFIX, Case, get_case_by_name
+from .config import ANALYSIS_YEARS, Case, get_case_by_name
 
 #: Annual means shorter than this many days are partial years (see below).
 FULL_YEAR_DAYS = 360
@@ -30,14 +30,13 @@ def _as_case(case: Case | str) -> Case:
 def variables_in(case: Case | str) -> list[str]:
     """Variable names available for a case, from its file names."""
     case = _as_case(case)
-    return sorted(
-        p.name[: -len(FILE_SUFFIX)]
-        for p in case.path.glob(f"*{FILE_SUFFIX}")
-    )
+    suffix = case.suffix
+    return sorted(p.name[: -len(suffix)] for p in case.path.glob(f"*{suffix}"))
 
 
 def var_path(case: Case | str, var: str) -> Path:
-    return _as_case(case).path / f"{var}{FILE_SUFFIX}"
+    case = _as_case(case)
+    return case.path / f"{var}{case.suffix}"
 
 
 def all_variables() -> list[str]:

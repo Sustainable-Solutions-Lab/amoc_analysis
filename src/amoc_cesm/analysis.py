@@ -45,11 +45,28 @@ def steady_state(
     years: slice = STEADY_STATE_YEARS,
     **kwargs,
 ) -> xr.DataArray:
-    """Time mean over the quasi-steady-state window (last 50 years)."""
+    """Time mean over the quasi-steady-state window.
+
+    Asserts the window is fully present. The +0.3 Sv runs end at 2150, 2140 and
+    2135, so a window reaching past the shortest of them would average a
+    different number of years in different panels of the same page and say
+    nothing about it — a difference in run length showing up as a difference in
+    climate.
+    """
     da = load_var(case, var, **kwargs)
+    present = da.sel(year=years)["year"].values
+    expected = years.stop - years.start + 1
+    assert len(present) == expected, (
+        f"{_as_name(case)}: {var} has {len(present)} of the {expected} years in "
+        f"{years.start}-{years.stop}; the steady-state window is not fully covered"
+    )
     out = climatology(da, years=years)
     out.attrs["steady_state_years"] = f"{years.start}-{years.stop}"
     return out
+
+
+def _as_name(case: Case | str) -> str:
+    return case if isinstance(case, str) else case.name
 
 
 def steady_state_anomaly(

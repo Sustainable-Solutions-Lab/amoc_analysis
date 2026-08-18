@@ -17,12 +17,12 @@ import matplotlib  # noqa: E402
 matplotlib.use("Agg")
 
 from amoc_cesm.books import write_book  # noqa: E402
-from amoc_cesm.config import FIGURE_DIR, OUTPUT_DIR  # noqa: E402
+from amoc_cesm.config import BOOK_DIR, FIGURE_DIR  # noqa: E402
 from amoc_cesm.workflows.sss_maps import N_YEARS, pages  # noqa: E402
 
 
 def main(n_years: int = N_YEARS) -> None:
-    path = OUTPUT_DIR / f"sss_end_of_run_last{n_years}yr.pdf"
+    path = BOOK_DIR / f"sss_end_of_run_last{n_years}yr.pdf"
     n = write_book(pages(n_years), path, png_dir=FIGURE_DIR / "sss_end_of_run")
     print(f"{n} pages -> {path}")
 

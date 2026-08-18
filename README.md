@@ -102,6 +102,7 @@ src/amoc_cesm/     importable package
   significance.py  Welch t-test vs. the control, optional FDR control
   variables.py     display units, scaling, colormaps, unit-error assertions
   regrid.py        POP ocean grid -> CAM 144x96, and the SALT case registry
+  postproc.py      the NAHosMIP_v2 delivery: SSS regrid, MOC/N_HEAT/N_SALT
   plotting.py      the 3x3 grid page: Robinson maps + zonal-mean sidebars
   books.py         multi-page PDF assembly
   workflows/
@@ -111,9 +112,11 @@ scripts/           runnable entry points
   inventory.py               what cases/variables/years are on disk
   make_steady_state_book.py  build the quasi-steady-state PDF book
   regrid_salt.py             regrid the POP SSS extracts onto the CAM grid
+  extract_postproc.py        NAHosMIP_v2 SSS + ocean transports
 data/input/        input NetCDF (not committed)
   Annual_Mean_2D_Fileds_ATMs/  CAM annual means, per case
   SALT_extracted/              POP monthly SSS, per case (regridded on demand)
+  postproc/                    NAHosMIP_v2: 4 components, 2051-2055, + verification/
 data/output/       generated books, figures, tables (not committed)
 ```
 
@@ -314,6 +317,85 @@ Panel means are weighted by `ocean_area`, not cos(lat), and land is the axes
 background showing through the NaN holes in the mesh rather than a drawn
 feature. `grid_3x3` grew three optional hooks for this — `footnotes`, `mean_fn`,
 `nan_face` — which the atmospheric pages don't pass and are unaffected by.
+
+## The NAHosMIP_v2 protocol (`data/input/postproc`)
+
+A second, richer delivery of the six **hosed** runs (no `noh`, no `picontrol`):
+39 atmospheric, 14 land, 11 sea-ice and 11 ocean variables, each as an annual
+*and* a seasonal mean — but only for model years **2051–2055**. It complements
+`SALT_extracted` (100 years, surface salinity only) rather than replacing it.
+7.1 GB, of which `ocn/SALT` (full 60-level) is 5.1 GB.
+
+```bash
+python scripts/extract_postproc.py [case ...]
+```
+
+writes per case and frequency:
+
+```
+data/output/postproc_v2/sss/<case>_SSS_<freq>_144x96.nc
+data/output/postproc_v2/transports/<case>_transports_<freq>.nc
+```
+
+`postproc.py` keys these six on `*_v2` labels (`1xCO2_poshos_v2`, …). The suffix
+is not cosmetic: their 2051 salinity field matches **neither** the
+`NAHosMIP_FIX` nor the `yr200` delivery of the same nominal experiment (RMS
+0.108 and 0.112 g/kg against the two, where zero would mean identical), so these
+are a *third* set of integrations.
+
+### Surface salinity
+
+`regrid_sss` reuses the same POP→CAM binning as the SSS extracts. The one
+difference is that these files carry `TLAT`/`TLONG` but neither `TAREA` nor
+`KMT`, so the grid is read from a file that has all four — gx1v6 is the same
+grid in every run, which is what `regrid.pop_grid()` is for.
+
+### MOC and the northward transports
+
+`transports` turns `MOC`, `N_HEAT` and `N_SALT` into something selectable.
+The raw files index region and component by integer, with the meanings held in
+separate byte-string variables; here they become string coordinates and depth
+becomes metres:
+
+```python
+from amoc_cesm.postproc import load_transports
+t = load_transports("1xCO2_poshos_v2")
+atl = t.transport_reg.values[1]                    # "Atlantic Ocean + ... + Hudson Bay"
+t.MOC.sel(transport_reg=atl).sum("moc_comp")       # streamfunction, Sv, (time, moc_z, lat)
+t.N_HEAT.sel(transport_reg=atl, transport_comp="Total")   # PW, (time, lat_aux_grid)
+```
+
+Three scalar AMOC indices are computed alongside, all from the Atlantic
+streamfunction below 500 m:
+
+| variable | definition |
+|---|---|
+| `amoc_max` | max over 20–60 °N, **all three** overturning components summed |
+| `amoc_rapid_26n` | same but at 26.5 °N, the RAPID array latitude |
+| `amoc_max_eulerian` | max over 20–60 °N, **Eulerian mean only** |
+
+`amoc_max_eulerian` is the definition behind the `verification/*_amoc_index.csv`
+files shipped with the delivery, and reproduces all six of them to float32
+precision — which is how the extraction is checked. It runs ~0.15 Sv *below*
+`amoc_max`: the bolus and submesoscale parameterisations oppose the mean flow.
+Note `N_SALT` keeps POP's raw `gram centimeter^3/kg/s`; it is not converted.
+
+### Two traps in these files
+
+**The annual means are December–November years, not calendar years.** CESM
+stamps a monthly mean with the *end* of its interval, so `cdo selyear,2051/2055`
+picks up December 2050 through November 2051 as "2051"; every annual record
+spans day 334 to day 334. This is not new — the `Annual_Mean_2D_Fileds_ATMs`
+files use the same convention, so the two are directly comparable — but neither
+is a calendar year. The exception is the **first ocean record**, an 11-month
+January–November 2051 mean, because the ocean archive has no December 2050. It
+is flagged as a `partial_year` coordinate on the output rather than described in
+a comment, so time averages can drop it deliberately.
+
+**The `case` global attribute is wrong.** Every file inherits
+`case = "B1850CN_f19g16_GCC_piCtrl300yr"` from the branch parent. `source_case`
+carries the real identity. Anything keying off `case` will label all six runs as
+the control.
 
 ## Usage
 

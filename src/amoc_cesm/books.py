@@ -36,6 +36,21 @@ def write_book(
     return n  # enumerate starts at 1, so this is the page count
 
 
+def is_complete(path: Path) -> bool:
+    """Whether a PDF was finished rather than left half-written.
+
+    A book takes minutes to build and the writer only closes the file at the
+    very end, so an interrupted run leaves a large, plausible-looking PDF with
+    no trailer. Checking for the trailer is how `--resume` tells a finished
+    volume from one that needs rebuilding; size and page count cannot.
+    """
+    if not path.exists():
+        return False
+    with path.open("rb") as f:
+        f.seek(max(0, path.stat().st_size - 1024))
+        return f.read().rstrip().endswith(b"%%EOF")
+
+
 def chain(*page_groups: Iterable[plt.Figure]) -> Iterator[plt.Figure]:
     """Concatenate page generators while keeping them lazy."""
     for group in page_groups:

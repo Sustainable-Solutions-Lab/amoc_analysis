@@ -60,6 +60,19 @@ def target_index(tlat: np.ndarray, tlon: np.ndarray) -> np.ndarray:
     return ilat * ATM_NLON + ilon
 
 
+def pop_grid(path: Path | str | None = None) -> xr.Dataset:
+    """The gx1v6 cell centres, areas and land mask.
+
+    Not every POP file carries them: the `postproc` extracts have `TLAT`/`TLONG`
+    but no `TAREA` or `KMT`, so the grid is read from a file that has all four.
+    The grid is a property of gx1v6, not of a run, so any such file will do.
+    """
+    if path is None:
+        path = SALT_DIR / SALT_SOURCES["picontrol"]
+    ds = xr.open_dataset(path)
+    return ds[["TLAT", "TLONG", "TAREA", "KMT"]]
+
+
 def _weight_matrix(ds: xr.Dataset) -> tuple[sparse.csr_matrix, np.ndarray, np.ndarray]:
     """Sparse (n_target, n_ocean) area-weight matrix, ocean area, ocean mask.
 
@@ -89,14 +102,18 @@ def source_cell_counts(ds: xr.Dataset) -> xr.DataArray:
 
 
 def _midpoint_time(ds_raw: xr.Dataset) -> xr.DataArray:
-    """Interval-midpoint time from ``time_bound``.
+    """Interval-midpoint time from the time-bounds variable.
 
     POP stamps each monthly mean with the *end* of its averaging interval, so
     the January 2051 mean carries the time 2051-02-01. Grouping by ``.dt.year``
     on that axis would put December of each year into the following year. The
-    midpoint of ``time_bound`` puts every stamp inside its own month.
+    midpoint of the bounds puts every stamp inside its own interval.
+
+    The bounds variable is ``time_bound`` in raw POP history files and
+    ``time_bnds`` in anything CDO has touched, so it is found through the CF
+    ``bounds`` attribute rather than by name.
     """
-    bounds = ds_raw["time_bound"]
+    bounds = ds_raw[ds_raw["time"].attrs["bounds"]]
     mid = bounds.mean(dim=bounds.dims[1]).values
     attrs = ds_raw["time"].attrs
     return xr.coding.times.decode_cf_datetime(
@@ -107,24 +124,31 @@ def _midpoint_time(ds_raw: xr.Dataset) -> xr.DataArray:
 def regrid_pop_file(
     path: Path | str,
     var: str = "SALT",
+    grid: xr.Dataset | None = None,
+    level: int = 0,
     time_chunk: int = 240,
 ) -> xr.Dataset:
     """Regrid one POP file onto the CAM grid.
 
     Returns a Dataset with ``<var>(time, lat, lon)`` and ``ocean_area(lat, lon)``.
-    The vertical dimension must be a single level (these are 5 m SSS extracts).
+    ``grid`` supplies the cell centres, areas and mask for files that do not
+    carry their own; ``level`` picks the vertical index when the field has one
+    (0 is the 5 m surface layer).
     """
     path = Path(path)
     ds = xr.open_dataset(path)
     ds_raw = xr.open_dataset(path, decode_times=False)
+    grid = grid if grid is not None else ds
 
-    weights, ocean_area, ocean = _weight_matrix(ds)
+    weights, ocean_area, ocean = _weight_matrix(grid)
     empty = ocean_area == 0.0
 
     da = ds[var]
     if "z_t" in da.dims:
-        assert da.sizes["z_t"] == 1, f"{path.name}: expected a single level, got {da.sizes['z_t']}"
-        da = da.isel(z_t=0)
+        da = da.isel(z_t=level)
+    assert da.shape[1:] == ocean.shape, (
+        f"{path.name}: field is {da.shape[1:]}, grid is {ocean.shape}"
+    )
 
     n_time = da.sizes["time"]
     out = np.empty((n_time, ATM_NLAT * ATM_NLON), dtype=np.float32)
@@ -151,7 +175,8 @@ def regrid_pop_file(
     result[var].attrs = {k: v for k, v in ds[var].attrs.items()
                          if k not in ("scale_factor", "_FillValue", "missing_value",
                                       "coordinates", "grid_loc")}
-    result[var].attrs["depth_m"] = float(ds["z_t"].values[0]) * 1e-2
+    if "z_t" in ds:
+        result[var].attrs["depth_m"] = float(np.atleast_1d(ds["z_t"].values)[level]) * 1e-2
     result["ocean_area"].attrs = {"long_name": "ocean area of the CAM cell", "units": "m2"}
     result["lat"].attrs = {"units": "degrees_north", "long_name": "latitude"}
     result["lon"].attrs = {"units": "degrees_east", "long_name": "longitude"}
