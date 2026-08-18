@@ -7,21 +7,29 @@ slowdown/shutdown**, using annual-mean 2D atmospheric fields from CESM1.
 
 A 3×3 factorial: CO₂ concentration × North Atlantic freshwater hosing.
 
-|            | −0.3 Sv        | 0 Sv         | +0.3 Sv          |
-|------------|----------------|--------------|------------------|
-| **1×CO₂**  | `1xCO2_neghos` | `picontrol`  | *(pending)*      |
-| **2×CO₂**  | `2xCO2_neghos` | `2xCO2_noh`  | *(pending)*      |
-| **4×CO₂**  | `4xCO2_neghos` | `4xCO2_noh`  | *(pending)*      |
+|            | −0.3 Sv        | 0 Sv         | +0.3 Sv             |
+|------------|----------------|--------------|---------------------|
+| **1×CO₂**  | `1xCO2_neghos` | `picontrol`  | `1xCO2_hosing_FIX`  |
+| **2×CO₂**  | `2xCO2_neghos` | `2xCO2_noh`  | `2xCO2_hosing_FIX`  |
+| **4×CO₂**  | `4xCO2_neghos` | `4xCO2_noh`  | `4xCO2_hosing_FIX`  |
 
 Negative hosing (freshwater extraction from the North Atlantic) strengthens the
 AMOC; positive hosing weakens or shuts it down. Comparing along the CO₂ axis
 isolates the warming response; comparing along the hosing axis isolates the AMOC
 response; the interaction terms say how much the two effects are separable.
 
-**Status:** the three +0.3 Sv cases have not yet been delivered, and directory
-names for them in `src/amoc_cesm/config.py` are placeholders to be corrected
-when those runs land. Run `python scripts/inventory.py` at any time for the
-current state of the data on disk.
+**Status:** all nine cells have run. The +0.3 Sv column was delivered twice —
+the `*_hosing_FIX` runs above are canonical, and the shorter `*_hosing_oldcrash`
+runs they replace sit in `config.ALTERNATE_CASES`, unused by either book so far.
+Run `python scripts/inventory.py` for the current state of the data on disk.
+
+The +0.3 Sv runs end early: 2150, 2140 and 2135 at 1×, 2× and 4×CO₂, against
+2150 for everything else. That is what sets both analysis windows below.
+
+Two file-naming conventions are in play: the cases delivered first are
+`<VAR>_ann_mean.nc`, the +0.3 Sv runs are `<VAR>_annual.nc`. Same grid, same
+annual means, same year convention — each `Case` reports its own suffix, and
+asserts it finds exactly one.
 
 ## Data
 
@@ -57,7 +65,7 @@ property of the run's archive, not of one file.
 
 ### Analysis windows
 
-`ANALYSIS_YEARS = 2052-2150` is the window common to every case, and is the
+`ANALYSIS_YEARS = 2052-2135` is the window common to every case, and is the
 default for all loading — including `picontrol`, which is trimmed to these same
 years rather than averaged over its full record. Same-year weather is
 uncorrelated across branches, so this cancels no noise; the reason to match years
@@ -65,8 +73,13 @@ is slow transient drift in the ocean, which is shared with the control over the
 same span and therefore differences out. Pass `years=None` to recover the full
 1851–2150 control, e.g. for internal-variability statistics.
 
-`STEADY_STATE_YEARS = 2101-2150` — the last 50 years of every simulation — is the
-quasi-steady-state window for the factorial comparisons.
+`STEADY_STATE_YEARS = 2086-2135` is the quasi-steady-state window: 50 years,
+placed at the latest point every case reaches. It is deliberately *not* the last
+50 years of each run. `4xCO2_hosing_FIX` stops at 2135, so the old 2101–2150
+window would have averaged 50 years in some panels of a page and 35 in others
+and said nothing about it — a difference in run length reading as a difference
+in climate. `analysis.steady_state` asserts the window is fully present rather
+than trusting the constant to stay in step with the data.
 
 Two differencing modes, in `amoc_cesm.analysis`:
 
@@ -77,8 +90,6 @@ steady_state("4xCO2_noh", "TREFMXAV")            # last-50-year mean, no referen
 ```
 
 Both take `reference=` to compare against any case, not just the control.
-
-**`4xCO2_noh` is a placeholder** to be replaced when the final run is available.
 
 39 variables are available (radiation, clouds, precipitation, surface fluxes,
 near-surface temperature and humidity). `TREFHT` is currently present only in
@@ -107,10 +118,13 @@ src/amoc_cesm/     importable package
   books.py         multi-page PDF assembly
   workflows/
     steady_state.py  quasi-steady-state workflow (pages now, tables later)
+    pair_compare.py  four-case comparison paired by AMOC state
+    sss_maps.py      end-of-run sea-surface-salinity map pages
     transient.py     time-dependent workflow (to be built)
 scripts/           runnable entry points
   inventory.py               what cases/variables/years are on disk
   make_steady_state_book.py  build the quasi-steady-state PDF book
+  make_pair_compare_book.py  build the four-case AMOC-state comparison book
   regrid_salt.py             regrid the POP SSS extracts onto the CAM grid
   extract_postproc.py        NAHosMIP_v2 SSS + ocean transports
 data/input/        input NetCDF (not committed)
@@ -127,8 +141,10 @@ of `{(co2, hosing): DataArray}` and knows nothing about which analysis produced
 it, so both workflows draw the same 3×3 page — rows are CO₂ levels, columns are
 hosing levels, and cases that have not run render as labeled placeholders.
 
-- **Quasi-steady-state** (`workflows/steady_state.py`) — the 2101–2150 mean of
-  each run treated as an equilibrium climate. Built.
+- **Quasi-steady-state** (`workflows/steady_state.py`) — the 2086–2135 mean of
+  each run treated as an equilibrium climate, on the 3×3 grid. Built.
+- **Pair comparison** (`workflows/pair_compare.py`) — four cases only, paired by
+  AMOC state rather than hosing level. Built; see below.
 - **Time-dependent** (`workflows/transient.py`) — year-for-year against the
   control. To be built; it adds only its own reductions.
 
@@ -137,9 +153,28 @@ hosing levels, and cases that have not run render as labeled placeholders.
 ```bash
 python scripts/make_steady_state_book.py RHREFHT PRECT CLDTOT
 python scripts/make_steady_state_book.py TREFMXAV --png    # also write page PNGs
-python scripts/make_steady_state_book.py --all             # every common variable
-python scripts/make_steady_state_book.py --all --name draft   # fixed name instead
+python scripts/make_steady_state_book.py                   # every available field
+python scripts/make_steady_state_book.py --name draft      # fixed name instead
 ```
+
+**Build it in volumes, and build it detached.** A full book is several minutes
+of work that is only written to disk when the last page is done, and an
+interrupted run leaves a large, plausible-looking PDF with no trailer — this has
+silently cost complete builds more than once. `books.is_complete` is the check
+that tells a finished PDF from a truncated one; size and page count cannot.
+
+```bash
+setsid nohup ./.venv/bin/python scripts/make_steady_state_book.py \
+  --name steady_state_book_9case --by-letter --resume \
+  < /dev/null > data/output/book_build.log 2>&1 &
+```
+
+`--by-letter` writes one volume per initial letter (`..._C.pdf`, `..._F.pdf`, …),
+each closed before the next begins, so an interruption costs one volume;
+`--resume` re-runs the identical command and skips whichever volumes already
+carry a valid trailer. `--volume-size N` splits by count instead. `setsid` is not
+decoration: plain `nohup ... &` leaves the build in the shell's process group,
+where it dies with the session.
 
 Books land in `data/output/books/` as
 `steady_state_book_<yyyy-mm-dd-hh-mm-ss>.pdf`. The timestamp means successive
@@ -147,7 +182,14 @@ runs accumulate rather than overwrite: a book records what the data looked like
 when it was built, and cases are still arriving. `--name` overrides the stem when
 you want a stable filename.
 
-**Four pages per variable**, each on its own color scale:
+**Four pages per variable.** The absolute page has its own sequential scale;
+the three difference pages share **one** diverging scale, chosen for the
+variable as a whole rather than per page. That is the point — the three answer
+three questions about the same field and are meant to be read against each
+other, and per-page scaling makes a small AMOC effect fill its colorbar exactly
+as a large warming effect fills its own. The shared limit spans every difference
+on every page so nothing is clipped; `--color-percentile 98` clips instead when
+one page's outliers would otherwise leave another blank.
 
 | page | what it shows | reference for each panel |
 |---|---|---|
@@ -198,6 +240,48 @@ color field that covers the whole map** — nothing is masked or stippled away:
 Anomaly color limits are the 98th percentile of |anomaly|, not the maximum, so a
 few extreme polar cells don't wash out the pattern; the colorbar carries extend
 arrows showing values run past both ends.
+
+### The pair-comparison book
+
+A narrower page for four cases only, paired by the AMOC state they end in rather
+than by hosing level. Hosing is the knob; the AMOC is what it turns, and CO₂
+turns it too — so the same hosing level means a different AMOC state at
+different CO₂.
+
+```bash
+setsid nohup ./.venv/bin/python scripts/make_pair_compare_book.py \
+  --name pair_compare_book --by-letter --resume \
+  < /dev/null > data/output/pair_build.log 2>&1 &
+```
+
+|            | vigorous AMOC          | AMOC shut down            | vigorous − shut down |
+|------------|------------------------|---------------------------|----------------------|
+| **1×CO₂**  | `picontrol` (0 Sv)     | `1xCO2_hosing_FIX` (+0.3) | AMOC effect at 1×CO₂ |
+| **4×CO₂**  | `4xCO2_neghos` (−0.3)  | `4xCO2_noh` (0 Sv)        | AMOC effect at 4×CO₂ |
+| **4× − 1×**| warming, AMOC vigorous | warming, AMOC shut down   | *(colorbars)*        |
+
+Both rows are a 0.3 Sv contrast, placed differently on the hosing axis: at 1×CO₂
+no hosing is already vigorous and +0.3 Sv shuts it down; at 4×CO₂ the warming has
+done part of the job, so no hosing *is* the shut-down case and −0.3 Sv is needed
+to keep it vigorous. So column 3 is the AMOC effect at fixed CO₂, and row 3 is
+the CO₂ effect at *matched* AMOC state.
+
+The bottom-right cell holds both colorbars rather than the interaction term. That
+term would be a difference of differences over pairs sitting at different points
+on the hosing axis, so it would not mean what its position on the grid implies.
+Four panels are absolute and share a sequential scale; four are differences and
+share a diverging one.
+
+**The row-1 pairing is unconfirmed.** Subpolar North Atlantic temperature
+(45–70 °N, 300–360 °E) over the steady-state window differs by −5.5 K across the
+4×CO₂ pair, a convincing shutdown signature, but only −2.0 K across the 1×CO₂
+pair. That is consistent with the salinity evidence that the `_FIX` hosing runs
+freshen the subpolar Atlantic far less than the runs they replaced, and it may
+mean `1xCO2_hosing_FIX` is weakened rather than genuinely collapsed. Settling it
+needs AMOC time series, which the archive does not yet carry for these runs —
+the only MOC data on disk is the 5-year NAHosMIP_v2 delivery, which contains
+neither `picontrol` nor the `noh` runs. If it turns out to be weakened, swap that
+one entry in `pair_compare.PAIRS` and rebuild.
 
 ### Units are asserted, not assumed
 
