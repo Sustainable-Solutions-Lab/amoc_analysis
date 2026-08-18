@@ -292,6 +292,29 @@ Canonical cases run 2051–2150 except `2xCO2_poshos` (to 2130) and
 `4xCO2_poshos` (to 2120), so `ANALYSIS_YEARS = 2052–2150` does not apply; the
 window common to all nine is 2052–2120.
 
+### End-of-run SSS maps
+
+```bash
+python scripts/make_sss_maps.py [n_years]     # default 10
+```
+
+writes `data/output/sss_end_of_run_last10yr.pdf` (and PNGs under
+`data/output/figures/sss_end_of_run/`): the 3×3 absolute field, the same grid as
+an anomaly against `picontrol`, and a page putting the `FIX` and `yr200` hosing
+runs side by side.
+
+Each simulation is averaged over **its own last ten years**, not over a shared
+window — the ocean runs end at four different years, so a fixed window would
+either discard the end of the long runs or run past the end of the short ones.
+Every panel therefore prints its own averaging window and the full span of the
+run beneath it (`2111–2120 of 2051–2120 (70 yr)`), and the FIX − yr200 column
+names both windows because it differences two different points in time.
+
+Panel means are weighted by `ocean_area`, not cos(lat), and land is the axes
+background showing through the NaN holes in the mesh rather than a drawn
+feature. `grid_3x3` grew three optional hooks for this — `footnotes`, `mean_fn`,
+`nan_face` — which the atmospheric pages don't pass and are unaffected by.
+
 ## Usage
 
 ```python

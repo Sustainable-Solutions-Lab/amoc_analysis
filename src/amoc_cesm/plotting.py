@@ -29,6 +29,8 @@ TEXT_PRIMARY = "#0b0b0b"
 TEXT_SECONDARY = "#52514e"
 COASTLINE = "#3a3a38"
 MISSING_FACE = "#f2f1ee"
+# Land, on pages whose field is ocean-only and so NaN over the continents.
+LAND_FACE = "#e6e5e1"
 
 MAP_PROJECTION = ccrs.Robinson(central_longitude=0)
 DATA_CRS = ccrs.PlateCarree()
@@ -110,9 +112,16 @@ def _draw_map(
     mask: xr.DataArray | None,
     significance_style: str,
     contour_levels: np.ndarray | None,
+    mean_fn=global_mean,
+    footnote: str | None = None,
+    nan_face: str | None = None,
 ) -> object:
     x, y, reindex, _ = _projected_mesh(da["lon"].values, da["lat"].values)
     ax.set_global()
+    if nan_face is not None:
+        # An ocean field is NaN over land; the axes background shows through the
+        # holes in the mesh, so land is drawn by not drawing it.
+        ax.set_facecolor(nan_face)
     mesh = ax.pcolormesh(
         x, y, da.values[:, reindex],
         cmap=cmap, vmin=vmin, vmax=vmax, shading="flat", rasterized=True,
@@ -123,10 +132,16 @@ def _draw_map(
         _draw_contours(ax, da, mask, significance_style, contour_levels)
 
     ax.text(
-        0.5, -0.09, f"mean {float(global_mean(da)):.4g}",
+        0.5, -0.09, f"mean {float(mean_fn(da)):.4g}",
         transform=ax.transAxes, ha="center", va="top",
         fontsize=7, color=TEXT_SECONDARY,
     )
+    if footnote is not None:
+        ax.text(
+            0.5, -0.165, footnote,
+            transform=ax.transAxes, ha="center", va="top",
+            fontsize=6.5, color=TEXT_SECONDARY,
+        )
     return mesh
 
 
@@ -225,23 +240,31 @@ def grid_3x3(
     significance_style: str = "field",
     drop_zero_contour: bool = True,
     annotations: dict[tuple[int, float], str] | None = None,
+    footnotes: dict[tuple[int, float], str] | None = None,
     missing_notes: dict[tuple[int, float], str] | None = None,
+    mean_fn=global_mean,
+    nan_face: str | None = None,
     extend: str = "neither",
     figsize: tuple[float, float] = (13.5, 7.6),
+    bottom: float = 0.115,
+    hspace: float = 0.16,
 ) -> plt.Figure:
     """Draw one page: 3x3 maps plus a zonal-mean profile beside each row.
 
     ``fields`` is keyed by ``(co2, hosing)``; absent keys render as "not yet
     run" placeholders so the grid keeps its shape as runs complete. Color limits
     are passed in rather than computed here, so a caller can hold them fixed
-    across pages. ``annotations`` labels individual panels, e.g. marking the
-    reference case on an anomaly page.
+    across pages. ``annotations`` labels individual panels above the map, e.g.
+    marking the reference case on an anomaly page; ``footnotes`` labels them
+    below, under the panel mean, which is where a per-panel averaging window
+    goes when the cases do not share one. ``mean_fn`` overrides the cos(lat)
+    global mean in that footer — ocean fields want their own area weights.
     """
     fig = plt.figure(figsize=figsize)
     gs = fig.add_gridspec(
         3, 4, width_ratios=[1, 1, 1, 0.62],
-        left=0.05, right=0.975, top=0.885, bottom=0.115,
-        wspace=0.09, hspace=0.16,
+        left=0.05, right=0.975, top=0.885, bottom=bottom,
+        wspace=0.09, hspace=hspace,
     )
 
     ticks = tick_levels(vmin, vmax)
@@ -263,6 +286,9 @@ def grid_3x3(
                 mesh = _draw_map(
                     ax, fields[key], cmap, vmin, vmax, mask,
                     significance_style, contour_levels,
+                    mean_fn=mean_fn,
+                    footnote=(footnotes or {}).get(key),
+                    nan_face=nan_face,
                 )
                 row_fields[hosing] = fields[key]
                 if annotations is not None and key in annotations:
