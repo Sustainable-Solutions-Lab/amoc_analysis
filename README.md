@@ -101,6 +101,7 @@ src/amoc_cesm/     importable package
   analysis.py      transient and steady-state anomalies
   significance.py  Welch t-test vs. the control, optional FDR control
   variables.py     display units, scaling, colormaps, unit-error assertions
+  regrid.py        POP ocean grid -> CAM 144x96, and the SALT case registry
   plotting.py      the 3x3 grid page: Robinson maps + zonal-mean sidebars
   books.py         multi-page PDF assembly
   workflows/
@@ -109,7 +110,10 @@ src/amoc_cesm/     importable package
 scripts/           runnable entry points
   inventory.py               what cases/variables/years are on disk
   make_steady_state_book.py  build the quasi-steady-state PDF book
+  regrid_salt.py             regrid the POP SSS extracts onto the CAM grid
 data/input/        input NetCDF (not committed)
+  Annual_Mean_2D_Fileds_ATMs/  CAM annual means, per case
+  SALT_extracted/              POP monthly SSS, per case (regridded on demand)
 data/output/       generated books, figures, tables (not committed)
 ```
 
@@ -201,6 +205,93 @@ asserted after scaling. Two checks are needed: dividing RH by 100 leaves every
 value inside a valid 0–130 % range, and only the mean reveals the error. All 39
 variables pass their own checks on the real data.
 
+## Ocean fields: regridding POP to the CAM grid
+
+Sea-surface salinity arrives on the POP displaced-pole ocean grid (gx1v6, 384×320
+curvilinear, monthly), not the 144×96 CAM grid that every atmospheric field uses.
+`src/amoc_cesm/regrid.py` bins it onto the CAM grid so the two can be differenced
+and plotted together. Nothing in it is specific to salinity — `regrid_pop_file`
+takes any POP variable name, so the same code handles SST, mixed-layer depth or
+any other 2-D ocean field extracted the same way.
+
+```bash
+python scripts/regrid_salt.py              # all cases
+python scripts/regrid_salt.py 4xCO2_poshos # just one
+```
+
+writes, per case, a monthly and an annual-mean file to
+`data/output/regrid/SSS/<case>_SSS_{mon,ann}_144x96.nc` (6.6 GB of POP input
+becomes ~390 MB).
+
+### Method
+
+First-order **area-weighted binning**: each POP T-cell is assigned whole to the
+CAM cell containing its centre and averaged with `TAREA` weights. The
+area-weighted global ocean mean is preserved to float32 round-off (checked at
+1e-8 g/kg), and total ocean area is preserved exactly.
+
+What it is *not* is exact conservative remapping — a POP cell straddling a CAM
+edge is counted entirely on one side. Doing better needs the POP cell corners
+(`ULAT`/`ULONG`), which these extracted files don't carry. The penalty is small
+because POP gx1v6 (~1°, finer near the equator and in the Arctic) is about four
+times finer than CAM f19: the median CAM cell averages 8 POP cells, the largest
+24. A handful of coastal cells contain only one POP cell and are correspondingly
+noisy — `regrid.source_cell_counts()` maps this.
+
+Land is handled by the weighting, not by a mask: each CAM value is the mean over
+the *ocean part* of that cell, and cells with no ocean are NaN. The ocean area
+that went into each cell is written alongside as `ocean_area` (m²), and it — not
+cos(lat) — is the correct weight for area-averaging the result, because it
+accounts for the land fraction of coastal cells.
+
+```python
+x = load_sss("4xCO2_poshos")                       # annual; freq="mon" for monthly
+x.SALT.weighted(x.ocean_area.fillna(0)).mean(("lat", "lon"))
+```
+
+### Two time conventions to know about
+
+POP stamps each monthly mean with the **end** of its averaging interval, so the
+January 2051 mean carries the time `2051-02-01`. Grouping that axis by
+`.dt.year` would push every December into the following year. The regridder
+replaces the time coordinate with the midpoint of `time_bound`, so each stamp
+falls inside its own month. Annual means are then length-of-month weighted, and
+only whole 12-month years are kept.
+
+Ocean `picontrol` runs to **2155**, five years longer than the atmospheric
+`picontrol`.
+
+### The +0.3 Sv hosing cases exist twice
+
+Each hosing experiment was delivered as both a `NAHosMIP_FIX` run and a `yr200`
+run. **These are not the same run truncated differently** — they diverge from
+the first month. The `FIX` runs are canonical and take the plain `*_poshos`
+names in `SALT_SOURCES`; the `yr200` runs are kept as `*_poshos_yr200` so the
+two can be compared.
+
+They behave very differently. Subpolar North Atlantic mean SSS (50–65 °N,
+300–350 °E), 1×CO₂ hosing:
+
+| year | `1xCO2_poshos` (FIX) | `1xCO2_poshos_yr200` |
+|------|----------------------|----------------------|
+| 2051 | 34.64                | 34.52                |
+| 2075 | 34.59                | 31.92                |
+| 2100 | 34.28                | 30.74                |
+| 2150 | 33.95                | *(ends 2100)*        |
+
+The `yr200` run freshens by ~4 g/kg in 50 years; the `FIX` run drifts by ~0.7 in
+100, and at 4×CO₂ its subpolar salinity is nearly indistinguishable from the
+unhosed `4xCO2_noh` run. Whatever `FIX` denotes, the two runs are not
+interchangeable, and any hosing signal computed from the `FIX` runs will be much
+weaker than from the `yr200` runs.
+
+### Coverage
+
+Unlike the atmospheric fields, the ocean cases do **not** share a common window.
+Canonical cases run 2051–2150 except `2xCO2_poshos` (to 2130) and
+`4xCO2_poshos` (to 2120), so `ANALYSIS_YEARS = 2052–2150` does not apply; the
+window common to all nine is 2052–2120.
+
 ## Usage
 
 ```python
@@ -215,4 +306,10 @@ print(float(global_mean(climatology(load_var(case, "LHFLX"), years=slice(2101, 2
 # every available case stacked on a `case` dimension, with co2/hosing coords
 ens = load_ensemble("FLUT", years=slice(2052, 2150))
 print(global_mean(ens).mean("year"))
+
+# regridded ocean salinity, on the same 144x96 grid as the fields above
+from amoc_cesm.regrid import load_sss
+sss = load_sss("4xCO2_poshos")                    # freq="mon" for monthly
+print(float(sss.SALT.sel(year=slice(2101, 2120)).mean("year")
+            .weighted(sss.ocean_area.fillna(0)).mean(("lat", "lon"))))
 ```
