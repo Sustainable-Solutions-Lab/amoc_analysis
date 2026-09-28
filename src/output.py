@@ -667,3 +667,36 @@ def plot_itcz_scatter(predictors, response, fits, single_vars, title, out_path):
     fig.tight_layout(rect=(0, 0, 1, 0.95))
     fig.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
+
+
+def plot_tglob_vs_amoc(annual, decadal, out_path):
+    """x-y line plot of AMOC strength against global-mean tas, one line per case.
+
+    ``annual`` and ``decadal`` are pooled predictor Datasets from
+    ``regression.build_pooled`` (block=None and block=10): each case is drawn as a
+    thin line through its annual values and a bold line through its 10-year block
+    means, both in time order, with a circle at the first decadal mean. Line style
+    and color follow the case convention (``case_line_style``).
+    """
+    fig, ax = plt.subplots(figsize=(8, 6))
+    for case in dl.EXPERIMENTS:
+        style = case_line_style(case)
+        a = annual.isel(sample=annual["run"].values == case)
+        d = decadal.isel(sample=decadal["run"].values == case)
+        ax.plot(a["tas_global_mean"], a["amoc_strength"], lw=0.6, alpha=0.35,
+                color=style["color"])
+        ax.plot(d["tas_global_mean"], d["amoc_strength"], lw=2.0, label=case, **style)
+        ax.plot(d["tas_global_mean"][0], d["amoc_strength"][0], "o", ms=5,
+                color=style["color"])
+    ax.set_xlabel("global-mean near-surface air temperature, tas (K)")
+    ax.set_ylabel("AMOC strength at 26.5°N (Sv)")
+    ax.set_title(
+        "CESM1 AMOC vs global-mean temperature, 2051–2150\n"
+        "bold: 10-year block means (○ = first decade); thin: annual means",
+        fontsize=10,
+    )
+    ax.grid(alpha=0.3)
+    ax.legend(fontsize=8, ncol=3, handlelength=3, loc="upper center",
+              bbox_to_anchor=(0.5, -0.1), frameon=False)
+    fig.savefig(out_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)

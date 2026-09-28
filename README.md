@@ -581,6 +581,7 @@ python scripts/make_scalar_timeseries.py   # data/processed/scalars_annual_CESM1
 python scripts/run_regressions.py          # data/output/regression/{tas,prc,pr}/[decadal10/]coef_set*.{pdf,nc}
 python scripts/plot_predictor_scatter.py   # data/output/regression/predictor_scatter.pdf
 python scripts/plot_scalar_timeseries.py   # data/output/regression/predictor_timeseries.pdf
+python scripts/plot_tglob_vs_amoc.py       # data/output/regression/tglob_vs_amoc.pdf (AMOC vs Tglob, 9 cases)
 python scripts/run_eof_regressions.py      # data/output/eof/{tas,prc,pr}/[decadal10/]{eof_patterns,pc_timeseries}.pdf, pc_regression_set*.nc
 python scripts/predict_scenarios.py        # data/output/scenarios/predicted_change_{tas,prc,pr}.pdf
 python scripts/run_itcz_regressions.py     # data/output/itcz/{band20,band30}/[decadal10/]coef_table_*.csv, itcz_fit_set*.nc
