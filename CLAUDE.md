@@ -127,6 +127,10 @@ rather than hiding them.
   1, 2, 4× (top to bottom); columns are hosing `m03Sv` (−0.3 Sv), none (0 Sv),
   `p03Sv` (+0.3 Sv) (left to right). Case names are `[124]xCO2` (no hosing) and
   `[124]xCO2_[pm]03Sv`.
+- **Line plots of cases**: CO₂ level sets the line style and hosing sets the
+  color: 1×, 2×, 4×CO₂ = solid, dashed, dotted; −0.3, 0, +0.3 Sv = red, black,
+  blue. Use `output.case_line_style(case)` (constants `output.CO2_LINESTYLE`,
+  `output.HOSING_COLOR`).
 - **Units and labels**: Always label axes with variable name and units; state the
   time range and any spatial averaging in the title or caption.
 

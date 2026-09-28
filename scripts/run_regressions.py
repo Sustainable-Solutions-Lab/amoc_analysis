@@ -1,6 +1,6 @@
 """Pooled per-grid-point regressions of gridded tas on scalar indices.
 
-Builds one pooled sample (years with all predictors present, across all four
+Builds one pooled sample (years with all predictors present, across the nine CESM1
 simulations), then for each selected predictor set fits a per-grid-point OLS and
 writes stippled coefficient maps (PDF) plus the coefficient fields (NetCDF) to
 ``data/output/regression/``. By default only sets 5 & 10 are run (pass
@@ -27,30 +27,25 @@ PREDICTAND_NAMES = ["tas", "prc", "pr"]
 
 CAVEATS = """Regression outputs: pooled per-grid-point OLS of a gridded predictand.
 
-- One regression per grid cell; the years of the predictand's simulations are
-  POOLED into a single fit with a common intercept and no per-run fixed effects.
-  Most predictands pool all four (historical-ssp585, abrupt-4xCO2, piControl,
-  u03-hos); total 'pr' pools only historical-ssp585 + abrupt-4xCO2 (no total-pr
-  data for the others). Pooling exploits between-run differences in the index
-  relationships to reduce collinearity.
+- Model: CESM1 (B1850CN, f19g16) NAHosMIP runs, a 3x3 matrix of CO2 level
+  (1x, 2x, 4x) x North Atlantic hosing (-0.3, 0, +0.3 Sv); case names
+  [124]xCO2[_m03Sv|_p03Sv].
+- One regression per grid cell; the years of all nine runs are POOLED into a
+  single fit with a common intercept and no per-run fixed effects.
 - Common sample: years with all predictors (Tglob, dT_NS, AMOC) present, per run
-  (= AMOC-present years).
+  = the AMOC years 2051-2150 (100 per run, 900 pooled).
 - Smoothing: 'decadal10' (slow timescales, decadal10/ subdir) = non-overlapping
-  10-year block means applied per run/segment to BOTH predictors and predictand
-  before pooling, produced by default. The 'annual' (interannual, this directory)
-  variant is produced only with --do-annuals.
+  10-year block means applied per run to BOTH predictors and predictand before
+  pooling (90 pooled blocks), produced by default. The 'annual' (interannual, this
+  directory) variant is produced only with --do-annuals.
 - p-values are nominal OLS (independent residuals). For 'annual' the within-run
   autocorrelation of annual data makes them OPTIMISTIC. The 'decadal10' block
   means decimate to ~independent decadal samples, so its degrees of freedom (and
-  thus p-values) are far more trustworthy -- at the cost of n (~50 vs 500).
-- Set 6 (three predictors) retains high collinearity (annual VIF ~ 22); its
-  partial coefficients are poorly constrained. See per-set VIF printed at build.
+  thus p-values) are far more trustworthy.
 - Coefficient units are [predictand units] / [predictor units] (predictor units:
   Tglob, dT_NS in K; AMOC in Sv).
-- The 'prc' predictand is CONVECTIVE precipitation (all four runs); 'pr' is TOTAL
-  precipitation (historical-ssp585 + abrupt-4xCO2 only). For historical-ssp585 the
-  r1->r4 member splice (historical r1i1p1f1, ssp585 r4i1p1f1) is identical for prc,
-  pr, tas, and AMOC, so predictand and predictors stay consistent.
+- 'prc' is CONVECTIVE precipitation (CAM PRECC); 'pr' is TOTAL precipitation
+  (CAM PRECT); both kg m-2 s-1, all nine runs.
 """
 
 
@@ -74,8 +69,8 @@ def run_for_predictand(name, smoothing, all_sets):
         fit = reg.fit_grid_ols(predictors[names], response)
 
         centering = reg.centering_means_for_set(predictors, names)
-        for tag, (mean, units) in centering.items():
-            fit.attrs[f"centering_mean_{tag}_{units}"] = mean
+        for base, (mean, units) in centering.items():
+            fit.attrs[f"centering_mean_{base}_{units}"] = mean
         if centering:
             fit.attrs["centering_note"] = (
                 "Centered (q_) predictors were demeaned by these pooled means before "

@@ -212,6 +212,13 @@ in `src/data_loader.py`.
 | `4xCO2` | `4x CO2, no hosing` | 11.8 ± 2.9 | 22.3 → 10.3 | −7.7 |
 | `4xCO2_p03Sv` | `4x CO2, +0.3 Sv` | 8.1 ± 4.1 | 21.9 → 5.9 | −10.8 |
 
+**Transient AMOC recovery in `2xCO2_p03Sv`.** In this run AMOC jumps from
+9.5 Sv (2077) to 26.8 Sv (2082) and falls back to about 6 Sv by 2086. The same
+run's gridded subpolar North Atlantic temperature (45–65°N, 60–10°W) warms by
+about 4 K over 2077–2081. The two datasets agree, so this looks like a genuine
+model event, not a data error, and it is kept. It dominates that run's
+2071–2080 and 2081–2090 decadal blocks.
+
 **How AMOC years line up with the gridded years.** The AMOC years use the same
 labels as the gridded files, and `amoc_strength_on_years` aligns the two by year.
 AMOC covers the first 100 years of every perturbation run. The runs lasting 105
@@ -253,36 +260,38 @@ handle the FV grid's half-width polar cells at ±90°.
 
 ## Analysis
 
-> **Note:** the method descriptions below still apply, but the run names, sample
-> sizes, fitted values and scenario numbers were written for the **earlier CESM2
-> dataset** (historical-ssp585, abrupt-4xCO2, piControl, u03-hos). They will be
-> updated once the analyses are re-run on the CESM1 runs above. The monthly path
-> (`make_monthly_means.py` and its dependents) needs monthly input and cannot run
-> on the annual-only CESM1 files.
+> **Status of this section (CESM1 data).** The pooled per-grid-point regressions
+> (`run_regressions.py`, default sets 5 & 10, decadal10) have been **re-run on the
+> nine CESM1 runs**, and the two subsections below describe those results. The
+> EOF, scenario-prediction and ITCZ subsections further down have **not** been
+> re-run yet. Their run names, sample sizes and numbers still refer to the
+> earlier CESM2 dataset (historical-ssp585, abrupt-4xCO2, piControl, u03-hos). The
+> CESM2 regression outputs were moved to `data/output/old_cesm2/regression/`. The
+> monthly path (`make_monthly_means.py` and its dependents) needs monthly input,
+> so it cannot run on the annual-only CESM1 files.
 
 ### Pooled per-grid-point regressions
 
 `scripts/run_regressions.py` regresses a gridded annual-mean **predictand** (one
-time series per grid cell) on the scalar indices `tas_global_mean` (Tglob),
-`tas_interhemispheric_diff` (dT_NS), and `amoc_strength` (AMOC). It runs for three
-predictands: **`tas`** (temperature, K) and **`prc`** (convective precipitation,
-kg m⁻² s⁻¹, all four runs), plus **`pr`** (total precipitation, kg m⁻² s⁻¹, pooled
-over only historical-ssp585 + abrupt-4xCO2 — the runs with total-`pr` data; see
-precip caveats above). `pr` outputs land in `data/output/regression/pr/` (and
-`eof/pr/`), alongside the `tas`/`prc` trees.
+time series per grid cell) on the scalar indices `tas_global_mean` (Tglob, K),
+`tas_interhemispheric_diff` (dT_NS, K) and `amoc_strength` (AMOC at 26.5°N, Sv).
+It runs for three predictands, each available for all nine runs: **`tas`**
+(temperature, K), **`prc`** (convective precipitation, kg m⁻² s⁻¹) and **`pr`**
+(total precipitation, kg m⁻² s⁻¹). Outputs go to `data/output/regression/<predictand>/`.
 
-The years of all four simulations (historical-ssp585, abrupt-4xCO2, piControl,
-u03-hos; greenland-hosing is excluded — no gridded field) are **pooled into one
-fit per grid cell** with a single common intercept and no per-run fixed effects.
-Pooling exploits the runs' disagreement about how the indices co-vary (piControl
-~uncorrelated; u03-hos flips the sign of dT_NS), sharply reducing the within-run
-collinearity. All sets use one common sample: the years where every predictor is
-present (= AMOC-present years), **551 rows** (historical-ssp585 251 — full 1850–2100
-now that AMOC is gap-free — and 100 each from the other three runs).
+The years of all nine CESM1 runs (the 3 × 3 CO₂ × hosing matrix) are **pooled
+into one fit per grid cell**, with a single common intercept and no per-run fixed
+effects. The design largely decouples the two main predictors, because CO₂ sets
+global temperature while hosing sets AMOC. Across the pooled decadal samples, Tglob
+spans 285.0–291.6 K and AMOC 5.4–27.0 Sv, with **corr(Tglob, AMOC) = 0.01**. All
+sets use one common sample: the years where every predictor is present, which are
+the AMOC years 2051–2150. That is **900 annual rows (100 per run)**. The control's
+gridded years before 2051 and the 105-year runs' years 2151–2155 have no AMOC and
+are dropped (complete-case deletion).
 
 Ten predictor sets are defined (one multi-panel coefficient map per set, per
-predictand). **By default only sets 5 & 10 are produced** (the two used in most
-analyses); pass `--all-sets` to any of the regression scripts to produce all ten:
+predictand). **By default only sets 5 & 10 are produced**; pass `--all-sets` to any
+of the regression scripts to produce all ten:
 
 | Set | Predictors |
 | --- | --- |
@@ -293,67 +302,123 @@ analyses); pass `--all-sets` to any of the regression scripts to produce all ten
 | 9 | full quadratic (centered): Tglob, Tglob², AMOC, AMOC², dT_NS, dT_NS², Tglob·AMOC, Tglob·dT_NS, AMOC·dT_NS |
 | 10 | Tglob × AMOC interaction (centered): Tglob, AMOC, Tglob·AMOC |
 
-- **Sets 4–6** use full multiple OLS → each map is that predictor's **partial**
-  coefficient (effect holding the others fixed).
-- **Sets 7–8** are Gram–Schmidt orthogonalizations (`add_orthogonalized_columns`):
-  each residual column is the index with the earlier ones regressed out, so the
-  columns are mutually orthogonal (VIF = 1) and give a hierarchical decomposition
-  whose attribution depends on the chosen order (compare 7 vs 8).
-- **Set 9** is the full quadratic response surface (`add_quadratic_columns`); the
+- **Sets 4–6** use full multiple OLS, so each map is that predictor's **partial**
+  coefficient (its effect with the other predictors held fixed).
+- **Sets 7–8** are Gram–Schmidt orthogonalizations (`add_orthogonalized_columns`).
+  Each residual column is the index with the earlier ones regressed out. The
+  columns are therefore mutually orthogonal (VIF = 1) and give a hierarchical
+  decomposition, whose attribution depends on the chosen order (compare 7 vs 8).
+- **Set 9** is the full quadratic response surface (`add_quadratic_columns`). The
   three base indices are **centered on their pooled means** before squares and
-  products are formed (essential for conditioning: cond(XᵀX) drops from ~1e20 to
-  ~1e5). Its 9 term coefficients are mapped on a 3×3 grid.
-- **Set 10** is the global-temperature × AMOC interaction model (reusing the
-  centered `add_quadratic_columns` terms): Tglob, AMOC, and Tglob·AMOC. Centering
-  the main effects conditions the design and makes each main-effect coefficient
-  the response at the *other* index's mean; the interaction coefficient is
-  identical to the uncentered form.
+  products are formed. Its 9 term coefficients are mapped on a 3×3 grid.
+- **Set 10** is the global-temperature × AMOC interaction model: Tglob, AMOC and
+  Tglob·AMOC, reusing the centered `add_quadratic_columns` terms. Because the main
+  effects are centered, each main-effect coefficient is the response at the
+  *other* index's pooled mean. The CESM1 centering means are Tglob = 288.48 K and
+  AMOC = 15.86 Sv, stored as `centering_mean_*` attributes in the NetCDF. The
+  interaction coefficient is the same as in the uncentered form.
 
-Coefficient maps (`src/output.py`) use a diverging colormap with symmetric bounds
-(white = 0; `RdBu_r` for tas with warm = red, `RdBu` for prc with wet = blue)
-and **stipple cells where p > 0.05**. Each set writes a PDF and a NetCDF of the
-coefficient/SE/t/p/R² fields to `data/output/regression/<predictand>/`, plus a
-caveats `README.txt`. `scripts/plot_predictor_scatter.py` writes
-`data/output/regression/predictor_scatter.pdf`, a 4-panel scatter of the pooled
-predictors colored by simulation. `scripts/plot_scalar_timeseries.py` writes
-`data/output/regression/predictor_timeseries.pdf`, the predictors as time series
-(one panel per simulation): Tglob and ΔT_NS as anomalies from their pooled means on
-the left axis (K), AMOC absolute on a right axis (Sv), with the decadal block means
-overlaid on the annual lines.
+Coefficient maps (`src/output.py`) use the Equal Earth projection and a diverging
+colormap with symmetric bounds (white = 0; `RdBu_r` for tas with warm = red,
+`RdBu` for precipitation with wet = blue). They **stipple cells where p > 0.05**.
+Each set writes a PDF and a NetCDF of the coefficient/SE/t/p/R² fields, plus a
+caveats `README.txt`. `scripts/plot_predictor_scatter.py` and
+`scripts/plot_scalar_timeseries.py` (predictor scatter and time-series plots in
+`data/output/regression/`) have not yet been re-run on CESM1.
 
-Caveats: p-values are **nominal OLS** (within-run autocorrelation makes them
-optimistic — see the decadal variant below, which largely resolves this); the
-3-index set retains high collinearity (VIF ≈ 22) and the quadratic set even after
-centering (max VIF ≈ 1500), so those coefficients are weakly constrained. Fits are
-validated against `statsmodels` (agreement < 1e-6), and the global mean of the
-`tas`-on-Tglob coefficient is exactly 1.0 (a consistency check).
+**Collinearity.** The design is well conditioned for the default sets: VIF =
+1.0002 for set 5 (Tglob, AMOC) and ≤ 1.19 for set 10. The three-index union is
+more collinear (decadal VIF: Tglob 9.3, AMOC 13.2, dT_NS 21.8), because dT_NS is
+largely a linear function of Tglob and AMOC. The partial coefficients of set 6
+(Tglob + dT_NS + AMOC) are therefore weakly constrained.
+
+Caveats: p-values are **nominal OLS**. Fits are validated against `statsmodels`
+(agreement < 1e-6). Two consistency checks come out exact. Global-mean `tas` *is*
+Tglob, so in any set containing Tglob the global mean of the `tas`-on-Tglob
+coefficient is exactly 1. Every other `tas` coefficient then has an area-mean of
+exactly 0, which also makes its NH and SH means equal and opposite.
+
+### Results: CESM1, decadal10, sets 5 & 10
+
+Pooled n = 90 decadal blocks (10 per run); df = 87 for set 5 and 86 for set 10.
+In the table, "global" is the area-weighted global mean of the coefficient map.
+"Typical SE" is the area mean of the per-cell standard error. "p < 0.05" is the
+fraction of global area where the coefficient is significant (nominal). Regions
+are area-weighted boxes: subpolar North Atlantic = 45–65°N, 60–10°W; Sahel =
+10–20°N, 20°W–40°E. Precipitation coefficients are converted to mm day⁻¹ (× 86400).
+
+**Set 5: predictand ~ Tglob + AMOC**
+
+| Predictand | Coefficient | Global | Typical SE | NH / SH | Regional | p < 0.05 | R² (area mean) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `tas` | Tglob (K K⁻¹) | 1.000 (exact) | 0.018 | 1.23 / 0.77 | subpolar N Atl. 1.36; 0–10°N 0.71 | 100 % | 0.97 |
+| `tas` | AMOC (K Sv⁻¹) | 0 (exact) | 0.005 | +0.071 / −0.071 | subpolar N Atl. **+0.36** | 97 % | |
+| `prc` | Tglob (mm day⁻¹ K⁻¹) | +0.033 | 0.008 | +0.044 / +0.022 | Sahel +0.079; 0–10°N +0.076 | 92 % | 0.62 |
+| `prc` | AMOC (mm day⁻¹ Sv⁻¹) | +0.002 | 0.002 | +0.011 / −0.008 | 0–10°S −0.017; Sahel +0.018 | 83 % | |
+| `pr` | Tglob (mm day⁻¹ K⁻¹) | +0.040 | 0.011 | +0.053 / +0.028 | Sahel +0.091; 0–10°N +0.076 | 91 % | 0.58 |
+| `pr` | AMOC (mm day⁻¹ Sv⁻¹) | +0.001 | 0.003 | +0.012 / −0.010 | 0–10°S −0.020; Sahel +0.027 | 77 % | |
+
+**Set 10: predictand ~ Tglob + AMOC + Tglob·AMOC (centered)**
+
+The main effects hardly change from set 5 (for example, `tas`/AMOC in the
+subpolar North Atlantic is +0.35 K Sv⁻¹), and area-mean R² rises only slightly
+(tas 0.98, prc 0.64, pr 0.59). The interaction term:
+
+| Predictand | Tglob·AMOC, global | Typical SE | Regional | p < 0.05 |
+| --- | --- | --- | --- | --- |
+| `tas` (K K⁻¹ Sv⁻¹) | 0 (exact) | 0.003 | subpolar N Atl. −0.022 | 48 % |
+| `prc` (mm day⁻¹ K⁻¹ Sv⁻¹) | 0.000 | 0.001 | subpolar N Atl. +0.001 | 32 % |
+| `pr` (mm day⁻¹ K⁻¹ Sv⁻¹) | −0.000 | 0.002 | subpolar N Atl. −0.002 | 26 % |
+
+**Interpretation.**
+
+- **Temperature.** With global temperature held fixed, AMOC mostly *moves heat
+  around* rather than changing the global mean. A 1 Sv stronger AMOC warms the
+  subpolar North Atlantic box by about 0.36 K on average. The largest effect,
+  0.90 K, is at 65°N, 10°W near Iceland, and values above 0.6 K Sv⁻¹ extend from
+  52°N to 79°N, reaching northeast toward the Barents Sea. It warms the NH by
+  0.07 K on average and cools the SH by the same amount. Per kelvin of global
+  warming, the NH warms 1.23 K and the SH 0.77 K. North of 70°N the coefficient
+  averages 2.7 K K⁻¹, peaking at 3.6 (polar amplification).
+- **Interaction.** The negative `tas` interaction in the subpolar North Atlantic
+  means AMOC's local warming effect weakens as the climate warms, by about 6 % of
+  its value per K of global warming (−0.022 / 0.354).
+- **Precipitation.** A stronger AMOC shifts tropical rain northward. Rainfall
+  increases north of the equator and over the Sahel (+0.027 mm day⁻¹ Sv⁻¹ for
+  `pr`) and decreases in the 0–10°S band (−0.020 mm day⁻¹ Sv⁻¹). This is the ITCZ
+  moving toward the hemisphere that AMOC warms. Global-mean total precipitation
+  increases by 0.040 mm day⁻¹ K⁻¹, about 1.4 % K⁻¹ of the 2.88 mm day⁻¹ control
+  mean. The Tglob maps show the familiar tropical wet-get-wetter pattern.
+- **Interaction significance.** The Tglob·AMOC interaction is significant (nominal
+  p < 0.05) over a quarter to half of the globe. Its magnitude is small, however,
+  so the additive set 5 already captures most of the response.
 
 ### Slow-timescale (decadal) variant
 
-To characterize variability slower than interannual, `run_regressions.py` (and
-the EOF script below) produces a **decadal** variant by default (the annual variant
-is opt-in via `--do-annuals`). The low-pass is **non-overlapping 10-year block means**
-(`data_loader.block_average_on_years`), applied **per run, per contiguous
-segment, to both the predictors and the predictand** inside
-`regression.build_pooled(block=10)` *before* pooling — so the identical filter
-acts on dependent and independent variables, and every downstream step (the
+`run_regressions.py` (and the EOF script below) produces a **decadal** variant by
+default, to characterize variability slower than interannual. The annual variant
+is opt-in via `--do-annuals`. The low-pass is **non-overlapping 10-year block
+means** (`data_loader.block_average_on_years`). It is applied **per run, per
+contiguous segment, to both the predictors and the predictand** inside
+`regression.build_pooled(block=10)`, *before* pooling. The same filter therefore
+acts on the dependent and independent variables, and every downstream step (the
 orthogonalized and quadratic columns, the grid OLS, the EOFs) inherits it. Blocks
-never span a run boundary or a within-run year gap; with the gap-free
-historical-ssp585 AMOC, that run is now one contiguous 1850–2100 segment (25
-ten-year blocks; a trailing partial block is dropped). Each block's timestamp is
-its midpoint year.
+never span a run boundary or a gap within a run. Each block's timestamp is its
+midpoint year. For CESM1, each run's AMOC years 2051–2150 form one contiguous
+segment of exactly ten blocks.
 
-Block averaging is a **decimation**, not a running mean: it collapses each decade
-to one ~independent sample (pooled **n ≈ 55**: historical-ssp585 25, others 10),
-so the nominal OLS degrees of freedom become honest — this resolves the
-annual-variant autocorrelation caveat rather than deferring it, at the cost of
-sample size (df ≈ 40 still supports the 9-term set 9). Quadratic and product terms
-are formed from the *filtered* bases (filter-then-square), i.e. the genuinely
+Block averaging is a **decimation**, not a running mean. It collapses each decade
+to one roughly independent sample (pooled **n = 90**, 10 per run), so the nominal
+OLS degrees of freedom become honest. This resolves the autocorrelation caveat of
+the annual variant, at the cost of sample size. Quadratic and product terms are
+formed from the *filtered* bases (filter, then square), which gives the genuinely
 low-frequency response surface. Decadal results go to
-`data/output/regression/<predictand>/decadal10/`; the annual outputs (produced only
-with `--do-annuals`) use the same filenames in the top-level `<predictand>/`.
+`data/output/regression/<predictand>/decadal10/`. The annual outputs (produced
+only with `--do-annuals`) use the same filenames in the top-level `<predictand>/`.
 
 ### EOF / principal-component analysis (additive path)
+
+> **Not yet re-run on CESM1.** The run names and numbers in this subsection refer to the earlier CESM2 dataset.
 
 `scripts/run_eof_regressions.py` is an **additive** companion to the direct
 per-grid-point maps (it does not replace `run_regressions.py`). It decomposes each
@@ -419,6 +484,8 @@ coefficient *and* p-value to Δcoef ~ 1e-10, Δp ~ 1e-8) should maps be wanted l
 
 ### Scenario prediction: where AMOC slowdown exacerbates vs. ameliorates CO₂ change
 
+> **Not yet re-run on CESM1.** The run names and numbers in this subsection refer to the earlier CESM2 dataset.
+
 `scripts/predict_scenarios.py` uses the **decadal** set 5 (Tglob + AMOC) and set 10
 (Tglob + AMOC + Tglob·AMOC) coefficient maps to predict end-of-century field changes
 and isolate the AMOC-slowdown contribution. It addresses: *where does AMOC slowdown
@@ -462,6 +529,8 @@ uses a common fixed **±100 %** color scale (values beyond saturate) to keep pan
 directly comparable.
 
 ### ITCZ-position regressions (scalar response)
+
+> **Not yet re-run on CESM1.** The run names and numbers in this subsection refer to the earlier CESM2 dataset.
 
 `scripts/run_itcz_regressions.py` regresses the **scalar** ITCZ index — the
 precipitation-mass centroid latitude, for two tropical bands

@@ -16,12 +16,27 @@ from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.lines import Line2D
 from scipy import stats
 
+import data_loader as dl
+
 MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 SIGNIFICANCE_P = 0.05
 PROJECTION = ccrs.EqualEarth()  # default for all maps (UN guidance)
 DATA_CRS = ccrs.PlateCarree()
+
+# Line-plot convention for cases: CO2 level sets the line style (1x solid,
+# 2x dashed, 4x dotted) and hosing sets the color (-0.3 Sv red, 0 black,
+# +0.3 Sv blue).
+CO2_LINESTYLE = {1: "-", 2: "--", 4: ":"}
+HOSING_COLOR = {-0.3: "red", 0.0: "black", 0.3: "blue"}
+
+
+def case_line_style(case):
+    """Matplotlib ``color``/``linestyle`` kwargs for a case's line."""
+    spec = dl.EXPERIMENTS[case]
+    return {"color": HOSING_COLOR[spec["hosing_sv"]],
+            "linestyle": CO2_LINESTYLE[spec["co2_multiple"]]}
 
 # Axis labels for the scalar predictors (used by the scatter plot).
 SCALAR_AXIS_LABELS = {
