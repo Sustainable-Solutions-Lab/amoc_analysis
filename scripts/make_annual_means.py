@@ -1,9 +1,10 @@
-"""Precompute month-length-weighted annual means of the CESM2 gridded monthly
-fields and write them to ``data/processed/``.
+"""Normalize the CESM1 annual-mean gridded fields and write them to
+``data/processed/``.
 
-Thin wrapper around :mod:`src.data_loader`. Run once after placing the monthly
-NetCDF files in ``data/input/``; downstream analyses then read the small annual
-files instead of reprocessing ~7 GB of monthly data each time.
+Thin wrapper around :mod:`src.data_loader`. The input files in ``data/input/``
+are already annual means; this step selects the analysis variables (``tas``,
+``prc``, ``pr``), converts them to CMIP names and units, and puts each run on an
+integer ``year`` axis, one file per variable and simulation.
 
     python scripts/make_annual_means.py
 """
@@ -15,36 +16,29 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import data_loader as dl
 
-# Dataset-level provenance for the combined historical+ssp585 simulation, which
-# splices two ensemble members (see README): the historical filename advertises
-# r1i1p1f1, while the ssp585 file's variant_label attribute is r4i1p1f1.
-COMBINED_ATTRS = {
-    "historical-ssp585": {
-        "note": (
-            "Single continuous simulation formed by splicing historical "
-            "(1850-2014) and ssp585 (2015-2100). Ensemble members differ: "
-            "historical variant_label r1i1p1f1, ssp585 variant_label r4i1p1f1."
-        )
-    }
-}
-
 
 def main():
     os.makedirs(dl.PROCESSED_DIR, exist_ok=True)
 
     for entry in dl.INPUT_MANIFEST:
         var, experiment = entry["var"], entry["experiment"]
-        out_name = f"{var}_annual_CESM2_{experiment}.nc"
+        out_name = dl.annual_file(var, experiment)
         out_path = os.path.join(dl.PROCESSED_DIR, out_name)
 
         print(f"building {out_name} ...", flush=True)
         annual = dl.load_and_normalize(entry)
 
         ds = annual.to_dataset(name=var)
+        forcing = dl.EXPERIMENTS[experiment]
         ds.attrs.update(
-            {"source_id": "CESM2", "experiment": experiment, "frequency": "annual"}
+            {
+                "source_id": dl.SOURCE_ID,
+                "experiment": experiment,
+                "frequency": "annual",
+                "co2_multiple": forcing["co2_multiple"],
+                "hosing_sv": forcing["hosing_sv"],
+            }
         )
-        ds.attrs.update(COMBINED_ATTRS.get(experiment, {}))
 
         ds.to_netcdf(out_path)
         years = ds["year"].values

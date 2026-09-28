@@ -1,12 +1,13 @@
 # AMOC Analysis
 
 Statistical analysis (primarily linear regression) of climate model output from
-the **CESM2** model, with a focus on the Atlantic Meridional Overturning
-Circulation (AMOC) and its relationships to other climate variables.
+the **CESM** model (currently CESM1 NAHosMIP runs; formerly CESM2), with a
+focus on the Atlantic Meridional Overturning Circulation (AMOC) and its
+relationships to other climate variables.
 
 ## Goals
 
-- Extract AMOC-relevant diagnostics from CESM2 output (e.g. AMOC streamfunction
+- Extract AMOC-relevant diagnostics from CESM output (e.g. AMOC streamfunction
   strength, North Atlantic surface temperature/salinity, surface fluxes).
 - Use linear regression to characterize relationships between AMOC strength and
   other climate variables and forcings.
@@ -27,8 +28,7 @@ pip install -r requirements.txt
 Key dependencies:
 
 - **numpy**, **pandas** — numerical arrays and tabular data
-- **xarray**, **netCDF4**, **dask** — reading CESM2 NetCDF output; `dask`
-  streams the ~2.5 GB monthly files so annual means are computed out-of-core
+- **xarray**, **netCDF4**, **dask** — reading CESM NetCDF output
 - **scipy**, **statsmodels** — linear regression and statistics
   (closed-form vectorized OLS for the per-grid-cell maps; `statsmodels`
   validates it and is available for single fits)
@@ -40,7 +40,7 @@ Key dependencies:
 ```
 amoc_analysis/
 ├── data/
-│   ├── input/      # CESM2 model output (read-only — do not modify)
+│   ├── input/      # CESM model output (read-only — do not modify)
 │   └── output/     # generated results, tables, figures (git-ignored)
 ├── src/            # analysis modules (data loading, regression, plotting)
 ├── scripts/        # thin command-line wrappers around src modules
@@ -51,187 +51,185 @@ amoc_analysis/
 
 ## Data
 
-CESM2 output is placed in `./data/input/` (NetCDF). This directory is treated as
-read-only reference data — see `CLAUDE.md`. The gridded fields are too large to
-commit to git and are not tracked in this repository, so **a colleague must
-obtain these input files separately** and place them in `data/input/` with these
-exact names (the filenames are hard-coded in `src/data_loader.py`):
+Model output lives in `./data/input/` (NetCDF). Treat this directory as read-only
+reference data (see `CLAUDE.md`). The files are too large for git and are not
+tracked, so **a colleague has to obtain them separately** and put them in
+`data/input/` under the exact names below. The names are hard-coded in
+`src/data_loader.py` (`EXPERIMENTS`, `AMOC_FILE`).
 
-```
-CESM2_AMOC_experiments.nc
-AMOC_4models_hist_ssp585.nc
-tas_Amon_CESM2_historical_r1i1p1f1_gn_18500115-20141215.nc
-tas_Amon_CESM2_ssp585_r1i1p1f1_gn_20150115-21001215.nc
-tas_Amon_CESM2_abrupt-4xCO2-002.nc
-tas_Amon_CESM2_piControl_070001-079912.nc
-tas_Amon_CESM2_u03-hos_1850001-202112.nc
-prc_Amon_CESM2_historical_r1i1p1f1_gn_185001-201412.nc
-prc_Amon_CESM2_ssp585_r4i1p1f1_gn_201501-206412.nc
-prc_Amon_CESM2_ssp585_r4i1p1f1_gn_206501-210012.nc
-prc_Amon_CESM2_abrupt-4xCO2_r1i1p1f1_gn_000101--099912.nc
-pr_Amon_CESM2_piControl_070001-079912.nc
-pr_Amon_CESM2_u03-hos_1850001-202112.nc
-```
-
-The **main** precipitation analysis uses **convective precipitation (`prc`)** across
-all four runs (total `pr` is not available for all of them). The
-`historical`/`ssp585`/`abrupt-4xCO2` runs supply `prc` directly (ssp585 split across
-two files); `piControl`/`u03-hos` supply convective precip under the variable name
-`pr` in their raw files.
-
-A **second, total-precipitation (`pr`) analysis** is produced *in addition*, from the
-total-`pr` files preserved in `data/input/pr_data/` (`historical`, `ssp585`,
-`abrupt-4xCO2` only — no `piControl`/`u03-hos`). It is therefore a **2-run** pooled
-analysis (historical-ssp585 + abrupt-4xCO2). Required files in `data/input/pr_data/`:
-
-```
-pr_Amon_CESM2_historical_r1i1p1f1_gn_18500115-20141215.nc
-pr_Amon_CESM2_ssp585_r1i1p1f1_gn_20150115-21001215.nc
-pr_Amon_CESM2_abrupt-4xCO2-001.nc
-```
+> **Model version.** These runs come from **CESM1**, not CESM2. The evidence: the
+> `B1850CN` compset, the `f19g16` grid, a 26-level CAM initial file
+> (`cami_0000-01-01_1.9x2.5_L26`), and the upstream path `…/CESM1_AMOC_Data/…` in
+> each file's `history`. Processed files are therefore tagged `CESM1`
+> (`data_loader.SOURCE_ID`). The earlier CESM2 inputs (monthly CMORized and CAM
+> files) are kept for reference in `data/input/old_data/`, and the code no longer
+> reads them.
 
 > **TODO (data source):** record where these files come from (archive/DOI/URL or
-> internal path) so the inputs themselves are reproducible — this is the one
-> prerequisite not contained in the repository.
+> internal path) so that the inputs can be reproduced. Per their `history`
+> attribute, they were extracted with CDO from
+> `/oak/stanford/groups/sjdavis/Mahendra/CESM1_AMOC_Data/Output_Extracted/`.
+
+### Input file format
+
+There is one file per simulation, named `<CESM case>_annual_mean.nc`
+(netCDF 64-bit offset, CF-1.0, written by CDO 2.1.1):
+
+- **Annual means only.** The upstream processing already averaged the fields to
+  one value per year, so no monthly data is available. `cdo seltimestep` trimmed
+  each run to its first 100/105/301 years.
+- **Dimensions** are `time` (unlimited, 1 step per year) × `lat` = 96 × `lon` = 144.
+  This is the CAM finite-volume 1.9° × 2.5° grid. `lat` runs from −90 to 90 and
+  includes the half-width polar cells; `lon` runs from 0 to 357.5 °E. All fields
+  are `float32` `(time, lat, lon)`. None contains `NaN`.
+- **Time axis.** `time` is `double` with `units = "years since YYYY-7-2 00:00:00"`
+  and `calendar = "365_day"`, values 0, 1, 2, …. `cdo settaxis` wrote these labels
+  (mid-year stamps); they are not the model's own dates. CF `years` units cannot
+  be decoded by xarray/cftime, so the loader opens files with
+  `decode_times=False` and converts `time` into an integer calendar `year` equal
+  to the reference year plus the offset.
+- **Variables.** Every file holds the same 39 raw CAM history fields, all
+  `cell_methods = "time: mean"`, with native CAM names and units:
+
+| Group | Variables | Units |
+| --- | --- | --- |
+| Near-surface state | `TREFHT` (2 m temperature), `TREFMNAV`/`TREFMXAV` (mean daily min/max of TREFHT), `QREFHT` (specific humidity), `RHREFHT` (relative humidity) | K; kg/kg; fraction |
+| Precipitation | `PRECT` (total), `PRECC` (convective), `PRECL` (large-scale), `PRECSH` (shallow convective), `PRECSC`/`PRECSL` (convective / large-scale snow, water equiv.) | m/s |
+| Surface water & heat fluxes | `QFLX` (surface water flux), `LHFLX` (latent), `SHFLX` (sensible) | kg/m²/s; W/m² |
+| Surface radiation | `FSDS`, `FSDSC`, `FSNS`, `FSNSC`, `FLDS`, `FLDSC`, `FLNS`, `FLNSC`, `SRFRAD` | W/m² |
+| TOA radiation | `SOLIN`, `FSNT`, `FSNTC`, `FLNT`, `FLNTC`, `FLUT`, `FLUTC` | W/m² |
+| Clouds | `CLDTOT`, `CLDLOW`, `CLDMED`, `CLDHGH` (vertically integrated cloud fraction); `SWCF`, `LWCF` (cloud forcing) | fraction; W/m² |
+| Other | `TMQ` (precipitable water), `SNOWHICE`/`SNOWHLND` (snow depth over ice / land, water equiv.) | kg/m²; m |
+
+(Suffix `C` = clear-sky. `S` = surface and `T` = top of model. `N` = net,
+`D` = downwelling and `U` = upwelling.)
+
+**AMOC is not in these files.** It comes from a separate file (see
+[below](#amoc-strength-time-series)).
+
+### Available simulations
+
+Nine runs: a 3 × 3 matrix of CO₂ level (1×, 2×, 4× preindustrial) × North
+Atlantic freshwater hosing (NAHosMIP protocol: −0.3, 0, +0.3 Sv). Each run's
+**case name** is built from those two forcings (`data_loader.case_name`):
+
+- `[124]xCO2` for runs without hosing, e.g. `2xCO2`. `1xCO2` is the
+  preindustrial control.
+- `[124]xCO2_[pm]03Sv` for hosed runs, where `p` = +0.3 Sv (freshwater added) and
+  `m` = −0.3 Sv (freshwater removed), e.g. `4xCO2_m03Sv`.
+
+The case name labels the run everywhere in the code and in processed file names.
+The table follows the case-grid layout, with CO₂ level as rows and hosing as
+columns:
+
+| Case name | File | CO₂ | Hosing | Years (n) |
+| --- | --- | --- | --- | --- |
+| `1xCO2_m03Sv` | `B1850CN_neghos0p3Sv_f19g16_NAHosMIP_v5_annual_mean.nc` | 1× | −0.3 Sv | 2051–2155 (105) |
+| `1xCO2` | `B1850CN_f19g16_GCC_piCtrl300yr_annual_mean.nc` | 1× | 0 | 1850–2150 (301) |
+| `1xCO2_p03Sv` | `B1850CN_hos0p3Sv_f19g16_NAHosMIP_v5_annual_mean.nc` | 1× | +0.3 Sv | 2051–2155 (105) |
+| `2xCO2_m03Sv` | `B1850CN_2xCO2_neghos0p3Sv_f19g16_NAHosMIP_v5_annual_mean.nc` | 2× | −0.3 Sv | 2051–2155 (105) |
+| `2xCO2` | `B1850CN_2xCO2_noh_f19g16_yr200_annual_mean.nc` | 2× | 0 | 2051–2150 (100) |
+| `2xCO2_p03Sv` | `B1850CN_2xCO2_hos0p3Sv_f19g16_NAHosMIP_v5_annual_mean.nc` | 2× | +0.3 Sv | 2051–2155 (105) |
+| `4xCO2_m03Sv` | `B1850CN_4xCO2_neghos0p3Sv_f19g16_NAHosMIP_v5_annual_mean.nc` | 4× | −0.3 Sv | 2051–2155 (105) |
+| `4xCO2` | `B1850CN_4xCO2_noh_f19g16_yr200_annual_mean.nc` | 4× | 0 | 2051–2150 (100) |
+| `4xCO2_p03Sv` | `B1850CN_4xCO2_hos0p3Sv_f19g16_NAHosMIP_v5_annual_mean.nc` | 4× | +0.3 Sv | 2051–2150 (100) |
+
+Figures that map several cases use this grid, available as
+`data_loader.CASE_GRID`: rows are CO₂ = 1, 2, 4× (top to bottom) and columns are
+hosing = `m03Sv`, 0 Sv, `p03Sv` (left to right).
+
+**Caveats (inferred from the files; please confirm):**
+
+- **Forcing values come from the CESM case names in the file names.** `hos0p3Sv`
+  is read as +0.3 Sv of freshwater added to the North Atlantic, `neghos0p3Sv` as
+  an equal amount removed (−0.3 Sv), and `noh` as no hosing.
+- **Branch point.** Every run except the `1xCO2` control is labeled from 2051, which is control
+  year 201 on the control's 1850-based labels. This matches the `yr200` in the
+  no-hosing file names. The year labels come from `cdo settaxis`, so an
+  experiment's year and the control's year only correspond if the runs really
+  branched there.
+- **Unequal lengths.** Run lengths differ: 100 years for `2xCO2`, `4xCO2` and
+  `4xCO2_p03Sv`, and 105 years for the other hosing runs. Pooled regressions
+  use whatever years each run has.
+- **Mislabeled `case` attribute.** The `2xCO2` file's global `case` attribute reads
+  `B1850CN_f19g16_GCC_piCtrl300yr`, but its data warm steadily (global-mean
+  `TREFHT` 287.3 → 288.8 K over 100 years), unlike the control (~286.9 K). The file
+  name, not the attribute, identifies the run.
+
+### Variable mapping and units (`src/data_loader.py`)
+
+The analysis uses CMIP variable names. `data_loader.VARIABLES` maps them to
+their CAM sources and converts the units:
+
+| Analysis var | CAM source | Conversion | Output units |
+| --- | --- | --- | --- |
+| `tas` | `TREFHT` | none | K |
+| `prc` (convective precip) | `PRECC` | × 1000 kg m⁻³ | kg m⁻² s⁻¹ |
+| `pr` (total precip) | `PRECT` (= `PRECC` + `PRECL`) | × 1000 kg m⁻³ | kg m⁻² s⁻¹ |
+
+CAM precipitation is a liquid-water-equivalent rate, and in these files the
+`m/s` label is correct. The global-mean `PRECT` (2.86 mm day⁻¹) equals the
+global-mean evaporation `QFLX`, so multiplying by the density of water gives the
+CMIP mass flux. The old CESM2 CAM files behaved differently: their precipitation
+was labeled `m/s` but already held kg m⁻² s⁻¹. Every run supplies all three
+variables, so the `prc` and `pr` analyses both pool all nine runs.
+
+Loader entry points:
+
+- `open_experiment(case)` returns the raw Dataset, with all 39 CAM fields, on an
+  integer `year` dimension. Use it for any field not in `VARIABLES`.
+- `load_annual_field(case, var)` returns a `(year, lat, lon)` DataArray in CMIP
+  names and units, with provenance attributes (`source_file`, `source_variable`,
+  `original_units`, `conversion_factor`).
+- `amoc_strength_on_years(case, years)` returns the AMOC series aligned to `years`
+  (NaN where not covered).
 
 ### AMOC strength time series
 
-`CESM2_AMOC_experiments.nc` — precomputed AMOC strength (units **Sv**) as annual
-time series of length 100 (`time` = year index 1–100). Each experiment is a
-separate variable:
+**Required, not yet supplied:** `data/input/AMOC_CESM1_B1850CN_f19g16.nc`
+(`data_loader.AMOC_FILE`). The loader expects **one variable per case name**
+from the table above (`1xCO2`, `2xCO2_p03Sv`, …), each a 1-D series in **Sv** on
+an integer calendar `year` coordinate that uses the same labels as the gridded
+files. `amoc_strength_on_years` aligns each series by year. Years the file does
+not cover become NaN and are dropped from regressions (complete-case deletion,
+see `CLAUDE.md`). If the delivered file's layout differs, adapt the loader to it.
+`scripts/make_scalar_timeseries.py` fails with `FileNotFoundError` until the file
+exists.
 
-| Variable | Description |
-| --- | --- |
-| `piControl` | preindustrial control |
-| `hosing_0.3Sv_uniform` | 0.3 Sv freshwater hosing, uniform North Atlantic |
-| `hosing_0.1Sv_greenland` | 0.1 Sv freshwater hosing, Greenland |
-| `abrupt_4xCO2` | abrupt quadrupling of CO₂ |
-| `historical_early_1850-1949` | historical, early window |
-| `historical+ssp585_late_2001-2100` | historical+SSP5-8.5, late window |
+### Processed annual fields (`data/processed/`, git-ignored)
 
-`AMOC_4models_hist_ssp585.nc` — AMOC strength (**Sv**) on a `year` axis 1850–2100
-(251 values, no gaps) for four CMIP6 models, one variable each (`CESM2`,
-`HadGEM3-GC31-MM`, `CanESM5`, `IPSL-CM6A-LR`). The `CESM2` series is the
-**gap-free historical+ssp585 AMOC** used for the `historical-ssp585` run; it
-matches the two `CESM2_AMOC_experiments.nc` historical windows to ~5e-5 in their
-overlap and fills the former 1950–2000 gap, so regressions can use the entire
-historical period. The other runs still draw AMOC from `CESM2_AMOC_experiments.nc`.
-
-### Gridded monthly fields
-
-Near-surface air temperature and precipitation on the CESM2 native grid
-(`lat` = 192 × `lon` = 288, nominal 1°), monthly (`Amon`). Two variables across
-five experiments:
-
-| Experiment (file stem) | Time range | n (months) | `tas`/`prc` provenance |
-| --- | --- | --- | --- |
-| `historical_r1i1p1f1_gn` | 1850-01 → 2014-12 | 1980 | CMORized |
-| `ssp585_r4i1p1f1_gn`¹ | 2015-01 → 2100-12 | 1032 | CMORized (split into two files) |
-| `abrupt-4xCO2`² | 0001-01 → 0999-12 | 11988 | CMORized |
-| `piControl_070001-079912` | 0700 → 0800 | 1200 | raw CESM2 (CAM history) |
-| `u03-hos_1850001-202112`³ | 1850-02 → 2022-01 | 2064 | raw CESM2 (CAM history) |
-
-**Important provenance caveats:**
-
-- **Two distinct data conventions.** The `historical`, `ssp585`, and
-  `abrupt-4xCO2` files are CMORized: temperature is `tas` (Near-Surface Air
-  Temperature, **K**) and convective precipitation is `prc` (**kg m⁻² s⁻¹**). The
-  `piControl` and `u03-hos` files are raw CESM2 CAM history output: temperature is
-  `TREFHT` (Reference height temperature, **K**) and `PRECC`-style **convective**
-  precipitation rate (liq + ice) under the variable name `pr`, labeled **m s⁻¹**
-  but actually a kg m⁻² s⁻¹ water mass flux (see below). These raw files also carry
-  the full CAM metadata set (hybrid-sigma coefficients `hyam`/`hybm`, `co2vmr`,
-  `sol_tsi`, etc.). Loading code maps variable names and reconciles units before
-  comparing across experiments. The analysis uses convective `prc` for every run.
-- ¹ The `ssp585` future is split into two files (2015–2064, 2065–2100) and is
-  ensemble member **`r4i1p1f1`** (the `prc` filenames say so; the `tas` ssp585
-  filename says r1 but its `variant_label` is also r4). So `tas` and `prc` share
-  the same r1-historical → r4-ssp585 splice.
-- ² `abrupt-4xCO2` is supplied as a single 999-year monthly run (~2.5 GB per
-  variable); the `prc` (`r1i1p1f1`) and `tas` (`-002`) files carry different file
-  suffixes but both span years 1–999.
-- ³ `u03-hos` is the freshwater-hosing experiment; its time axis spans
-  1850–2022 on a `noleap` calendar.
-
-### Processed annual means (`data/processed/`, git-ignored)
-
-`scripts/make_annual_means.py` precomputes month-length-weighted annual means
-(correct for the `noleap` calendar) of the gridded fields, following CMIP
-variable names: `tas` (K), `prc` (**convective** precipitation, kg m⁻² s⁻¹), and
-`pr` (**total** precipitation, kg m⁻² s⁻¹, two runs). The raw CAM files contribute
-`TREFHT` (renamed `tas`) and their convective precip (source variable `pr`, renamed
-`prc`); total `pr` comes from `data/input/pr_data/`. Each variable carries provenance
-attributes (`source_file`, `source_variable`, `original_units`, `annual_mean_method`,
-`precip_kind`). Output (10 files):
-
-| File | Coverage |
-| --- | --- |
-| `{tas,prc}_annual_CESM2_historical-ssp585.nc` | 1850–2100 (251 yr, spliced) |
-| `{tas,prc}_annual_CESM2_abrupt-4xCO2.nc` | years 1–999 |
-| `tas_annual_CESM2_piControl.nc`, `prc_annual_CESM2_piControl.nc` | years 700–799 |
-| `tas_annual_CESM2_u03-hos.nc`, `prc_annual_CESM2_u03-hos.nc` | 1850–2021 |
-| `pr_annual_CESM2_historical-ssp585.nc` (total precip) | 1850–2100 (251 yr, spliced) |
-| `pr_annual_CESM2_abrupt-4xCO2.nc` (total precip) | years 1–999 |
-
-**Precipitation caveats:**
-
-- **Two precipitation analyses.** The primary analysis uses convective
-  precipitation (`prc`) across all four runs; a separate **total-precipitation
-  (`pr`)** analysis covers only the two runs with total-`pr` data (historical-ssp585
-  + abrupt-4xCO2). Do not interpret `prc` as total precipitation, and do not compare
-  `pr` and `prc` coefficients as if they were the same field.
-- **Mislabeled source units.** The raw `piControl`/`u03-hos` `prc` source carries
-  `units = "m/s"`, but its values are a water mass flux already in kg m⁻² s⁻¹
-  (they match the CMIP precip magnitude; true m s⁻¹ precipitation would be ~1000×
-  smaller). The data is used as-is without scaling; outputs record this in a
-  `units_note` attribute.
-
-The combined `historical-ssp585` files treat historical (1850–2014) and
-ssp585 (2015–2100) as one continuous simulation; the ensemble members differ
-(historical r1i1p1f1, ssp585 r4i1p1f1), but identically for `tas` and `prc`, so
-the predictand and the temperature-derived predictors share the same splice.
+`scripts/make_annual_means.py` writes one file per variable per run,
+`{tas,prc,pr}_annual_CESM1_{case}.nc` (27 files). Each is a `(year, lat, lon)`
+field in CMIP names and units. The variable carries provenance attributes, and
+the file's global attributes record `source_id`, `experiment`, `co2_multiple` and
+`hosing_sv`. No averaging happens here, because the inputs are already annual.
 
 ### Scalar time series (`data/processed/`, git-ignored)
 
-`scripts/make_scalar_timeseries.py` writes one `scalars_annual_CESM2_{exp}.nc`
-per simulation, each holding these one-value-per-year series on the simulation's
-gridded year axis:
+`scripts/make_scalar_timeseries.py` writes one `scalars_annual_CESM1_{case}.nc` per
+run. Each holds these series on the run's year axis:
 
-- `amoc_strength` (Sv) — from `CESM2_AMOC_experiments.nc`, except
-  `historical-ssp585`, which uses the gap-free 1850–2100 `CESM2` series in
-  `AMOC_4models_hist_ssp585.nc`
-- `tas_global_mean` (K) — area-weighted global annual-mean temperature
-- `tas_interhemispheric_diff` (K) — area-weighted NH-mean minus SH-mean
-- `precip_centroid_lat_20`, `precip_centroid_lat_30` (°N) — the **precipitation-mass
-  centroid latitude**, an **ITCZ-position index**, over 20°S–20°N and 30°S–30°N. It
-  is the area- and precip-weighted mean latitude of the zonal-mean precipitation,
-  `Σ φ·P·a / Σ P·a` (reusing the exact band area weights). Unlike a bare argmax,
-  the centroid integrates over *both* branches of a double ITCZ, so it varies
-  continuously instead of jumping between branches — important because CESM2 has a
-  pronounced southern (double-ITCZ) precip maximum. Present only for runs with a
-  gridded precip file (all but greenland-hosing); the source is convective `prc`
-  for every run.
+- `amoc_strength` (Sv), from `AMOC_FILE`
+- `tas_global_mean` (K), the area-weighted global annual-mean temperature
+- `tas_interhemispheric_diff` (K), the area-weighted NH mean minus the SH mean
+- `precip_centroid_lat_20`, `precip_centroid_lat_30` (°N), the **precipitation-mass
+  centroid latitude** (an ITCZ-position index) over 20°S–20°N and 30°S–30°N. It is
+  the area- and precipitation-weighted mean latitude of the zonal-mean convective
+  precipitation (`prc`), `Σ φ·P·a / Σ P·a`. Unlike an argmax, the centroid covers
+  *both* branches of a double ITCZ, so it changes continuously instead of jumping
+  between them.
 
-| File | year axis | notes |
-| --- | --- | --- |
-| `…historical-ssp585.nc` | 1850–2100 | AMOC complete 1850–2100 (from `AMOC_4models_hist_ssp585.nc`) |
-| `…abrupt-4xCO2.nc` | 1–999 | AMOC years 1–100; NaN after |
-| `…piControl.nc` | 700–799 | AMOC years 700–799 |
-| `…u03-hos.nc` | 1850–2021 | AMOC years 1850–1949; NaN after |
-| `…hosing-0.1Sv-greenland.nc` | 1–100 | AMOC only — no gridded `tas` for this run |
-
-The AMOC series in `CESM2_AMOC_experiments.nc` are the **first 100 years** of
-each run, placed at the start of that run's year axis. The `historical-ssp585`
-run instead uses the continuous 1850–2100 `CESM2` series from
-`AMOC_4models_hist_ssp585.nc` (no 1950–2000 gap), so regressions can use the full
-historical period. Temperature scalars are derived from the annual `tas`
-files — area weighting commutes with the month-length-weighted annual mean, so
-this is exact (verified to 0 K against recomputation from monthly data). Area
-weighting uses exact zonal-band weights, `sin(edge_N) − sin(edge_S)`, which
-handle the FV grid's half-width polar cells. Regressions drop years with any
-missing dependent/predictor value (see `CLAUDE.md`).
+Area weighting uses exact zonal-band weights, `sin(edge_N) − sin(edge_S)`, which
+handle the FV grid's half-width polar cells at ±90°.
 
 ## Analysis
+
+> **Note:** the method descriptions below still apply, but the run names, sample
+> sizes, fitted values and scenario numbers were written for the **earlier CESM2
+> dataset** (historical-ssp585, abrupt-4xCO2, piControl, u03-hos). They will be
+> updated once the analyses are re-run on the CESM1 runs above, which requires the
+> AMOC file. The monthly path (`make_monthly_means.py` and its dependents) needs
+> monthly input and cannot run on the annual-only CESM1 files.
 
 ### Pooled per-grid-point regressions
 
@@ -480,8 +478,8 @@ After placing the input files in `data/input/` (see [Data](#data)) and installin
 dependencies, run, in order:
 
 ```bash
-python scripts/make_annual_means.py        # data/processed/{tas,prc,pr}_annual_*.nc
-python scripts/make_scalar_timeseries.py   # data/processed/scalars_annual_*.nc
+python scripts/make_annual_means.py        # data/processed/{tas,prc,pr}_annual_CESM1_*.nc
+python scripts/make_scalar_timeseries.py   # data/processed/scalars_annual_CESM1_*.nc (needs the AMOC file)
 python scripts/run_regressions.py          # data/output/regression/{tas,prc,pr}/[decadal10/]coef_set*.{pdf,nc}
 python scripts/plot_predictor_scatter.py   # data/output/regression/predictor_scatter.pdf
 python scripts/plot_scalar_timeseries.py   # data/output/regression/predictor_timeseries.pdf

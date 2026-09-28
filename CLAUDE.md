@@ -110,6 +110,23 @@ rather than hiding them.
   symmetric bounds with equal magnitude and opposite sign so white represents
   zero. Example: if data ranges from -0.03 to 0.05, use bounds (-0.05, 0.05),
   not the raw data range.
+- **Map projection**: Use the Equal Earth projection for all maps by default
+  (following UN guidance): `ccrs.EqualEarth()`, available as
+  `output.PROJECTION`. Draw gridded data with `transform=ccrs.PlateCarree()`
+  (`output.DATA_CRS`), and call `ax.coastlines()`. Example:
+  ```python
+  import matplotlib.pyplot as plt
+  import cartopy.crs as ccrs
+
+  fig = plt.figure()
+  ax = plt.axes(projection=ccrs.EqualEarth())
+  ax.coastlines()
+  ```
+- **Multi-case map figures**: Any figure showing maps for several cases uses a
+  CO₂ × hosing grid, available as `data_loader.CASE_GRID`. Rows are CO₂ level
+  1, 2, 4× (top to bottom); columns are hosing `m03Sv` (−0.3 Sv), none (0 Sv),
+  `p03Sv` (+0.3 Sv) (left to right). Case names are `[124]xCO2` (no hosing) and
+  `[124]xCO2_[pm]03Sv`.
 - **Units and labels**: Always label axes with variable name and units; state the
   time range and any spatial averaging in the title or caption.
 

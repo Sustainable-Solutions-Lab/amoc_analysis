@@ -20,7 +20,7 @@ MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
                "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 SIGNIFICANCE_P = 0.05
-PROJECTION = ccrs.PlateCarree(central_longitude=0)
+PROJECTION = ccrs.EqualEarth()  # default for all maps (UN guidance)
 DATA_CRS = ccrs.PlateCarree()
 
 # Axis labels for the scalar predictors (used by the scatter plot).

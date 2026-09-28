@@ -1,218 +1,171 @@
-"""Load CESM2 monthly NetCDF output and produce normalized annual means.
+"""Load CESM1 annual-mean CAM output and normalize it to CMIP variable names.
 
-The precipitation analysis uses **convective precipitation (``prc``) uniformly for
-every run** (total ``pr`` was never available for all runs). Two file conventions
-coexist in ``data/input/``:
+Input format (``data/input/*.nc``): one file per simulation, holding **annual
+means** (already time-averaged upstream with CDO) of 39 raw CAM history fields on
+the ``f19g16`` finite-volume atmosphere grid (``lat`` = 96 incl. the poles x
+``lon`` = 144, 1.89 deg x 2.5 deg). Dimensions are ``(time, lat, lon)``, one step
+per year. The files come from the B1850CN (CESM1) NAHosMIP experiment set: a
+preindustrial control plus 1x/2x/4xCO2 runs with 0, +0.3 Sv, or -0.3 Sv North
+Atlantic freshwater hosing (see ``EXPERIMENTS``).
 
-- **CMORized** files (``historical``, ``ssp585``, ``abrupt-4xCO2``) store
-  temperature as ``tas`` (K); convective precipitation is the CMIP ``prc`` variable
-  (kg m-2 s-1). The ssp585 future is split across two files. Its ensemble member is
-  ``r4i1p1f1`` while the historical segment is ``r1i1p1f1`` -- but this r1->r4 splice
-  is identical for ``prc``, ``tas``, and AMOC (the ``tas`` ssp585 file is labeled
-  r1 but its ``variant_label`` is r4), so the predictand and the predictors stay
-  mutually consistent within each period.
-- **Raw CAM-history** files (``piControl``, ``u03-hos``) store temperature as
-  ``TREFHT`` (K) and *convective* precipitation (liq + ice) under the variable name
-  ``pr``, alongside a full set of CAM metadata variables. That precipitation is
-  labeled ``units = "m/s"``, but its values are actually a water mass flux in
-  kg m-2 s-1 (they match the CMIP precip magnitude; true m s-1 precipitation would
-  be ~1000x smaller), so the label is treated as a mislabel and the data is used
-  as-is without scaling.
+The ``time`` axis is ``"years since YYYY-7-2"`` on a ``365_day`` calendar, written
+by ``cdo settaxis`` -- CF-``years`` units that xarray/cftime cannot decode -- so
+files are opened with ``decode_times=False`` and ``time`` is converted to an
+integer calendar ``year`` (reference year + offset). Every file has a regular
+1-year step.
 
-This module reconciles both into a common convention following CMIP variable
-names: ``tas`` (K) and ``prc`` (convective precipitation, kg m-2 s-1). It computes
-month-length-weighted annual means (correct for the CESM2 ``noleap`` calendar)
-and attaches provenance attributes documenting the original source and units.
+This module maps the CAM names used by the analysis to CMIP names (see
+``VARIABLES``): ``TREFHT`` -> ``tas`` (K), ``PRECC`` -> ``prc`` (convective
+precipitation), ``PRECT`` -> ``pr`` (total precipitation). CAM precipitation is a
+liquid-water-equivalent rate in m s-1 (the units label is genuine: the global mean
+PRECT matches the global mean QFLX evaporation, ~2.86 mm/day), so it is multiplied
+by the density of water, 1000 kg m-3, to give kg m-2 s-1. Provenance attributes
+record the source file, variable, and conversion.
+
+AMOC strength is not in the gridded files; it is read from the separate
+``AMOC_FILE`` (see ``amoc_strength_on_years``).
 """
 
-import datetime
 import os
 
 import numpy as np
 import xarray as xr
 
-# Per-variable output metadata. CMIP convention: ``pr`` is total precipitation,
-# ``prc`` is convective precipitation; both water mass fluxes (kg m-2 s-1). The
-# main analysis uses ``prc`` for all four runs; ``pr`` (total) is available for
-# only historical-ssp585 and abrupt-4xCO2 (from ``data/input/pr_data/``).
-VAR_METADATA = {
-    "tas": {"units": "K", "long_name": "Near-Surface Air Temperature"},
-    "pr": {"units": "kg m-2 s-1", "long_name": "Precipitation", "precip_kind": "total"},
-    "prc": {
-        "units": "kg m-2 s-1",
-        "long_name": "Convective Precipitation",
-        "precip_kind": "convective",
-    },
-}
+SOURCE_ID = "CESM1"
 
 # Directory layout relative to the repository root.
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INPUT_DIR = os.path.join(_REPO_ROOT, "data", "input")
 PROCESSED_DIR = os.path.join(_REPO_ROOT, "data", "processed")
 
-ANNUAL_MEAN_METHOD = "month-length weighted (noleap)"
+# Density of liquid water (kg m-3): converts CAM precipitation rates (m s-1) to
+# the CMIP water mass flux (kg m-2 s-1).
+WATER_DENSITY = 1000.0
 
-# Source-of-truth manifest: maps each input file to its target variable and the
-# handling needed to normalize it. ``source_variable`` is the variable to read
-# (renamed to the target ``var`` on output). ``segments`` (combined experiments)
-# lists the per-file pieces concatenated along ``year``.
-#
-# Each entry produces exactly one output file: {var}_annual_CESM2_{experiment}.nc
+# Analysis variable (CMIP name) -> CAM source variable, multiplicative conversion
+# to the output units, and output metadata.
+VARIABLES = {
+    "tas": {
+        "source_variable": "TREFHT",
+        "scale": 1.0,
+        "units": "K",
+        "long_name": "Near-Surface Air Temperature",
+    },
+    "prc": {
+        "source_variable": "PRECC",
+        "scale": WATER_DENSITY,
+        "units": "kg m-2 s-1",
+        "long_name": "Convective Precipitation",
+        "precip_kind": "convective",
+    },
+    "pr": {
+        "source_variable": "PRECT",
+        "scale": WATER_DENSITY,
+        "units": "kg m-2 s-1",
+        "long_name": "Precipitation",
+        "precip_kind": "total",
+    },
+}
+
+# One input file per simulation, in case-grid order (see ``CASE_GRID``).
+# ``co2_multiple`` is the CO2 concentration relative to preindustrial and
+# ``hosing_sv`` the North Atlantic freshwater forcing (Sv; negative = freshwater
+# removal), both read from the CESM case names in the file names. Year ranges are
+# the labels written by ``cdo settaxis``: the 1xCO2 control is 1850-2150 and every
+# other run starts in 2051 (control year 201, cf. the ``yr200`` in the no-hosing
+# file names).
+INPUT_FILES = [
+    {"file": "B1850CN_neghos0p3Sv_f19g16_NAHosMIP_v5_annual_mean.nc", "co2_multiple": 1, "hosing_sv": -0.3},
+    {"file": "B1850CN_f19g16_GCC_piCtrl300yr_annual_mean.nc", "co2_multiple": 1, "hosing_sv": 0.0},
+    {"file": "B1850CN_hos0p3Sv_f19g16_NAHosMIP_v5_annual_mean.nc", "co2_multiple": 1, "hosing_sv": 0.3},
+    {"file": "B1850CN_2xCO2_neghos0p3Sv_f19g16_NAHosMIP_v5_annual_mean.nc", "co2_multiple": 2, "hosing_sv": -0.3},
+    {"file": "B1850CN_2xCO2_noh_f19g16_yr200_annual_mean.nc", "co2_multiple": 2, "hosing_sv": 0.0},
+    {"file": "B1850CN_2xCO2_hos0p3Sv_f19g16_NAHosMIP_v5_annual_mean.nc", "co2_multiple": 2, "hosing_sv": 0.3},
+    {"file": "B1850CN_4xCO2_neghos0p3Sv_f19g16_NAHosMIP_v5_annual_mean.nc", "co2_multiple": 4, "hosing_sv": -0.3},
+    {"file": "B1850CN_4xCO2_noh_f19g16_yr200_annual_mean.nc", "co2_multiple": 4, "hosing_sv": 0.0},
+    {"file": "B1850CN_4xCO2_hos0p3Sv_f19g16_NAHosMIP_v5_annual_mean.nc", "co2_multiple": 4, "hosing_sv": 0.3},
+]
+
+# Case-name suffix for each hosing level: m = -0.3 Sv, none = 0 Sv, p = +0.3 Sv.
+HOSING_SUFFIX = {-0.3: "_m03Sv", 0.0: "", 0.3: "_p03Sv"}
+
+
+def case_name(co2_multiple, hosing_sv):
+    """Case name ``[124]xCO2[_m03Sv|_p03Sv]`` (e.g. 2, -0.3 -> ``2xCO2_m03Sv``)."""
+    return f"{co2_multiple}xCO2{HOSING_SUFFIX[hosing_sv]}"
+
+
+# Case name -> input file spec; the case name labels the run everywhere downstream.
+EXPERIMENTS = {
+    case_name(spec["co2_multiple"], spec["hosing_sv"]): spec for spec in INPUT_FILES
+}
+
+# Layout for any figure mapping several cases: rows are CO2 levels (1, 2, 4x),
+# columns are hosing levels (-0.3, 0, +0.3 Sv). CASE_GRID[row][col] is a case name.
+CO2_LEVELS = [1, 2, 4]
+HOSING_LEVELS = [-0.3, 0.0, 0.3]
+CASE_GRID = [[case_name(co2, hos) for hos in HOSING_LEVELS] for co2 in CO2_LEVELS]
+
+# Each entry produces exactly one processed file: annual_file(var, experiment).
 INPUT_MANIFEST = [
-    {
-        "var": "tas",
-        "experiment": "historical-ssp585",
-        "segments": [
-            {
-                "file": "tas_Amon_CESM2_historical_r1i1p1f1_gn_18500115-20141215.nc",
-                "source_variable": "tas",
-            },
-            {
-                "file": "tas_Amon_CESM2_ssp585_r1i1p1f1_gn_20150115-21001215.nc",
-                "source_variable": "tas",
-            },
-        ],
-    },
-    {
-        "var": "prc",
-        "experiment": "historical-ssp585",
-        # Convective precip: ssp585 is split into two files, and its realization
-        # (r4i1p1f1) differs from the historical/tas realization (r1i1p1f1) -- the
-        # only prc ssp585 available; the member mismatch is documented as a caveat.
-        "segments": [
-            {
-                "file": "prc_Amon_CESM2_historical_r1i1p1f1_gn_185001-201412.nc",
-                "source_variable": "prc",
-            },
-            {
-                "file": "prc_Amon_CESM2_ssp585_r4i1p1f1_gn_201501-206412.nc",
-                "source_variable": "prc",
-            },
-            {
-                "file": "prc_Amon_CESM2_ssp585_r4i1p1f1_gn_206501-210012.nc",
-                "source_variable": "prc",
-            },
-        ],
-    },
-    {
-        "var": "tas",
-        "experiment": "abrupt-4xCO2",
-        "segments": [
-            {
-                "file": "tas_Amon_CESM2_abrupt-4xCO2-002.nc",
-                "source_variable": "tas",
-            }
-        ],
-    },
-    {
-        "var": "prc",
-        "experiment": "abrupt-4xCO2",
-        "segments": [
-            {
-                "file": "prc_Amon_CESM2_abrupt-4xCO2_r1i1p1f1_gn_000101--099912.nc",
-                "source_variable": "prc",
-            }
-        ],
-    },
-    {
-        "var": "tas",
-        "experiment": "piControl",
-        "segments": [
-            {
-                "file": "tas_Amon_CESM2_piControl_070001-079912.nc",
-                "source_variable": "TREFHT",
-            }
-        ],
-    },
-    {
-        "var": "prc",
-        "experiment": "piControl",
-        "segments": [
-            {
-                "file": "pr_Amon_CESM2_piControl_070001-079912.nc",
-                "source_variable": "pr",
-            }
-        ],
-    },
-    {
-        "var": "tas",
-        "experiment": "u03-hos",
-        "segments": [
-            {
-                "file": "tas_Amon_CESM2_u03-hos_1850001-202112.nc",
-                "source_variable": "TREFHT",
-            }
-        ],
-    },
-    {
-        "var": "prc",
-        "experiment": "u03-hos",
-        "segments": [
-            {
-                "file": "pr_Amon_CESM2_u03-hos_1850001-202112.nc",
-                "source_variable": "pr",
-            }
-        ],
-    },
-    # Total precipitation (``pr``), available for only two runs, from the preserved
-    # files in ``data/input/pr_data/``. Produces a separate 2-run total-precip
-    # analysis alongside the 4-run convective (``prc``) one. The ssp585 segment is
-    # variant r4 (like the tas ssp585), so the r1->r4 splice matches the predictors.
-    {
-        "var": "pr",
-        "experiment": "historical-ssp585",
-        "segments": [
-            {
-                "file": "pr_data/pr_Amon_CESM2_historical_r1i1p1f1_gn_18500115-20141215.nc",
-                "source_variable": "pr",
-            },
-            {
-                "file": "pr_data/pr_Amon_CESM2_ssp585_r1i1p1f1_gn_20150115-21001215.nc",
-                "source_variable": "pr",
-            },
-        ],
-    },
-    {
-        "var": "pr",
-        "experiment": "abrupt-4xCO2",
-        "segments": [
-            {
-                "file": "pr_data/pr_Amon_CESM2_abrupt-4xCO2-001.nc",
-                "source_variable": "pr",
-            }
-        ],
-    },
+    {"var": var, "experiment": experiment}
+    for experiment in EXPERIMENTS
+    for var in VARIABLES
 ]
 
 
-def _center_monthly_time(ds):
-    """Center each monthly mean's ``time`` stamp within the month it represents.
+def annual_file(var, experiment):
+    """Processed gridded annual-mean file name for ``var`` in ``experiment``."""
+    return f"{var}_annual_{SOURCE_ID}_{experiment}.nc"
 
-    CMORized files stamp monthly means mid-month (day ~15), so the stamp already
-    sits inside the correct month. The raw CAM-history files stamp each mean at
-    the *end* of its averaging interval — the first of the following month (e.g.
-    the January mean is labeled Feb 1, 00Z) — which would misassign December into
-    the next year and miscount ``days_in_month``. Shifting those back 15 days
-    lands every stamp inside the month it represents (``time_bnds`` is not used
-    because it is absent from some files). Detected via the first stamp's
-    day-of-month so the shift is applied only to end-of-interval files.
+
+def scalar_file(experiment):
+    """Processed per-simulation scalar time-series file name."""
+    return f"scalars_annual_{SOURCE_ID}_{experiment}.nc"
+
+
+def _years_from_time(time):
+    """Integer calendar years from a ``"years since YYYY-M-D"`` time axis.
+
+    Each value is a whole-year offset from the reference date (cdo stamps each
+    annual mean at the same day-of-year as the reference), so the calendar year
+    is the reference year plus the offset.
     """
-    if int(ds["time"].dt.day.values[0]) == 1:
-        ds = ds.assign_coords(time=ds["time"] - datetime.timedelta(days=15))
-    return ds
+    reference_year = int(time.attrs["units"].split("since")[1].split("-")[0])
+    return reference_year + time.values.astype(int)
 
 
-def annual_mean(da):
-    """Month-length-weighted annual mean of a monthly DataArray.
+def open_experiment(experiment):
+    """Open one simulation's annual-mean file with an integer ``year`` dimension.
 
-    Weights each month by its number of days (``time.dt.days_in_month``), which
-    on the ``noleap`` calendar gives the exact time-mean over each year. Returns
-    a DataArray with the monthly ``time`` dimension replaced by integer ``year``.
+    Returns the raw CAM Dataset (native variable names and units) with ``time``
+    replaced by ``year``, so any of its 39 fields can be selected directly.
     """
-    weights = da["time"].dt.days_in_month
-    numerator = (da * weights).groupby("time.year").sum("time")
-    denominator = weights.groupby("time.year").sum("time")
-    return numerator / denominator
+    path = os.path.join(INPUT_DIR, EXPERIMENTS[experiment]["file"])
+    ds = xr.open_dataset(path, decode_times=False)
+    years = _years_from_time(ds["time"])
+    return ds.rename(time="year").assign_coords(year=years)
+
+
+def load_annual_field(experiment, var):
+    """Annual-mean ``(year, lat, lon)`` field ``var`` (a ``VARIABLES`` key) for
+    ``experiment``, converted to CMIP units, with provenance attributes."""
+    spec = VARIABLES[var]
+    source = open_experiment(experiment)[spec["source_variable"]]
+    field = (source * spec["scale"]).rename(var)
+    field.attrs = {
+        **{k: v for k, v in spec.items() if k not in ("source_variable", "scale")},
+        "source_file": EXPERIMENTS[experiment]["file"],
+        "source_variable": spec["source_variable"],
+        "original_units": source.attrs["units"],
+        "conversion_factor": spec["scale"],
+    }
+    return field
+
+
+def load_and_normalize(entry):
+    """Build the annual-mean DataArray for one ``INPUT_MANIFEST`` entry."""
+    return load_annual_field(entry["experiment"], entry["var"])
 
 
 def block_average_on_years(obj, block):
@@ -256,122 +209,12 @@ def block_average_on_years(obj, block):
     )
 
 
-def _load_segment(segment, target_var):
-    """Open one input file, select/rename the source variable, convert units,
-    and return its month-length-weighted annual mean as a DataArray named
-    ``target_var`` with provenance attributes attached."""
-    path = os.path.join(INPUT_DIR, segment["file"])
-    # chunks={} streams via dask using the file's native on-disk chunking,
-    # keeping peak memory low for the ~2.5 GB monthly files.
-    ds = xr.open_dataset(path, chunks={})
-    ds = _center_monthly_time(ds)
-    da = ds[segment["source_variable"]]
-    original_units = da.attrs.get("units", "")
-
-    meta = VAR_METADATA[target_var]
-    annual = annual_mean(da).rename(target_var)
-    annual.attrs = {
-        **meta,
-        "source_file": segment["file"],
-        "source_variable": segment["source_variable"],
-        "original_units": original_units,
-        "annual_mean_method": ANNUAL_MEAN_METHOD,
-    }
-    # The raw CAM-history precip is labeled "m/s" but its values are a water mass
-    # flux in kg m-2 s-1 (matching the CMIP precip magnitude); record the mislabel
-    # and leave the data unscaled rather than applying a bogus density factor.
-    if target_var == "prc" and original_units == "m/s":
-        annual.attrs["units_note"] = (
-            "source units attribute was 'm/s' but values are kg m-2 s-1 "
-            "(water mass flux); used as-is without conversion"
-        )
-    return annual
-
-
-def load_and_normalize(entry):
-    """Build the annual-mean DataArray for one manifest entry.
-
-    Concatenates multi-segment experiments (e.g. historical+ssp585) along
-    ``year``. Segments are assumed contiguous and non-overlapping in time.
-    """
-    pieces = [_load_segment(seg, entry["var"]) for seg in entry["segments"]]
-    if len(pieces) == 1:
-        return pieces[0]
-    combined = xr.concat(pieces, dim="year")
-    # Preserve attributes from the first segment; note all contributing sources.
-    combined.attrs = dict(pieces[0].attrs)
-    combined.attrs["source_file"] = "; ".join(
-        seg["file"] for seg in entry["segments"]
-    )
-    return combined
-
-
-def _load_segment_monthly(segment, target_var):
-    """Open one input file and pivot its monthly values to ``(year, month, lat,
-    lon)`` -- the raw monthly means (no averaging), named ``target_var`` with
-    provenance attributes. After ``_center_monthly_time`` every file is a clean
-    Jan->Dec, 12-months-per-year series, so the time axis unstacks to (year, month).
-    """
-    path = os.path.join(INPUT_DIR, segment["file"])
-    ds = xr.open_dataset(path)
-    ds = _center_monthly_time(ds)
-    da = ds[segment["source_variable"]]
-    original_units = da.attrs.get("units", "")
-
-    # The centered time axis is a clean Jan->Dec, 12-months-per-year, contiguous-year
-    # series (verified for both file conventions), so a direct reshape to
-    # (year, 12, lat, lon) is exact -- and far faster than xarray's dask ``unstack``.
-    years, months = da["time"].dt.year.values, da["time"].dt.month.values
-    uniq_years = np.unique(years)
-    n_year = uniq_years.size
-    expected = np.tile(np.arange(1, 13), n_year)
-    assert da.sizes["time"] == 12 * n_year and np.array_equal(months, expected), (
-        f"{segment['file']}: time axis is not a clean 12-month-per-year Jan->Dec series"
-    )
-    monthly = xr.DataArray(
-        da.values.reshape(n_year, 12, da.sizes["lat"], da.sizes["lon"]),
-        dims=("year", "month", "lat", "lon"),
-        coords={"year": uniq_years, "month": np.arange(1, 13),
-                "lat": da["lat"], "lon": da["lon"]},
-        name=target_var,
-    )
-
-    meta = VAR_METADATA[target_var]
-    monthly.attrs = {
-        **meta,
-        "source_file": segment["file"],
-        "source_variable": segment["source_variable"],
-        "original_units": original_units,
-        "monthly_method": "calendar-month means pivoted to (year, month)",
-    }
-    if target_var == "prc" and original_units == "m/s":
-        monthly.attrs["units_note"] = (
-            "source units attribute was 'm/s' but values are kg m-2 s-1 "
-            "(water mass flux); used as-is without conversion"
-        )
-    return monthly
-
-
-def load_and_normalize_monthly(entry):
-    """Build the ``(year, month, lat, lon)`` monthly DataArray for one manifest entry.
-
-    The monthly analog of :func:`load_and_normalize`: concatenates multi-segment
-    experiments along ``year`` (the calendar ``month`` axis is shared).
-    """
-    pieces = [_load_segment_monthly(seg, entry["var"]) for seg in entry["segments"]]
-    if len(pieces) == 1:
-        return pieces[0]
-    combined = xr.concat(pieces, dim="year")
-    combined.attrs = dict(pieces[0].attrs)
-    combined.attrs["source_file"] = "; ".join(
-        seg["file"] for seg in entry["segments"]
-    )
-    return combined
-
-
 # --- Scalar (one-value-per-year) diagnostics -------------------------------
 
-AMOC_FILE = "CESM2_AMOC_experiments.nc"
+# Precomputed AMOC strength for these runs, supplied separately from the gridded
+# files. Expected layout: one variable per case name (``EXPERIMENTS`` key), each on an integer
+# calendar ``year`` coordinate matching the gridded files' year labels, in Sv.
+AMOC_FILE = "AMOC_CESM1_B1850CN_f19g16.nc"
 
 
 def latitude_band_weights(lat):
@@ -381,7 +224,7 @@ def latitude_band_weights(lat):
     ``sin(edge_north) - sin(edge_south)``, with cell edges taken as the
     midpoints between adjacent centers and the outermost edges clamped to ±90°.
     This is exact for a regular lon×lat grid and correctly accounts for the
-    CESM2 FV grid's half-width polar cells (unlike ``cos(lat)``, which zeros the
+    FV grid's half-width polar cells (unlike ``cos(lat)``, which zeros the
     ±90° cells). Longitude spacing is uniform and cancels in any mean.
     """
     lat_rad = np.deg2rad(np.asarray(lat))
@@ -430,83 +273,26 @@ def tropical_precip_centroid_lat(da, band):
     return centroid.rename("precip_centroid_lat")
 
 
-def amoc_strength_on_years(segments, years):
-    """Place AMOC strength (Sv) onto ``years``.
+def amoc_strength_on_years(experiment, years):
+    """AMOC strength (Sv) for ``experiment`` placed onto ``years``.
 
-    ``segments`` is a list of ``{"variable", "year_start"[, "file"]}``: each source
-    variable's values are written starting at ``year_start`` on the target axis,
-    read from ``file`` (default ``CESM2_AMOC_experiments.nc``, whose series are the
-    first N years of their run). The historical-ssp585 run instead draws a single
-    gap-free 1850-2100 series from ``AMOC_4models_hist_ssp585.nc``. Years not
-    covered by any segment are left missing (NaN).
+    Reads the ``experiment`` variable of ``AMOC_FILE`` and aligns it by calendar
+    year; years the AMOC series does not cover are left missing (NaN), so the
+    regressions drop them by complete-case deletion.
     """
-    years = np.asarray(years)
-    values = np.full(years.size, np.nan)
-    for seg in segments:
-        ds = xr.open_dataset(os.path.join(INPUT_DIR, seg.get("file", AMOC_FILE)))
-        v = ds[seg["variable"]].values
-        start = int(np.nonzero(years == seg["year_start"])[0][0])
-        values[start : start + v.size] = v
-    return xr.DataArray(
-        values, coords={"year": years}, dims="year", name="amoc_strength"
-    )
+    amoc = xr.open_dataset(os.path.join(INPUT_DIR, AMOC_FILE))[experiment]
+    return amoc.reindex(year=np.asarray(years)).rename("amoc_strength")
 
 
-# One scalar file per simulation, sharing each run's gridded year axis. AMOC
-# values 1..N map to the run's first N years (NaN-padded), except historical-ssp585,
-# which carries a gap-free 1850-2100 AMOC series from AMOC_4models_hist_ssp585.nc.
-# The greenland-hosing run has no gridded tas, so it carries AMOC only on a bare
-# 1..100 index. ``precip_file``/``precip_var`` give the gridded annual precipitation
-# source for the ITCZ centroid diagnostic (``precip_centroid_lat_*``) -- convective
-# ``prc`` for every run (None where no gridded precip exists).
+# One scalar file per simulation, on the run's gridded year axis. Every run has
+# gridded tas and precipitation; ``precip_var`` selects the precipitation source
+# for the ITCZ centroid diagnostic (``precip_centroid_lat_*``).
 SCALAR_SIMULATIONS = [
     {
-        "experiment": "historical-ssp585",
-        "tas_file": "tas_annual_CESM2_historical-ssp585.nc",
-        "precip_file": "prc_annual_CESM2_historical-ssp585.nc",
+        "experiment": experiment,
+        "tas_file": annual_file("tas", experiment),
+        "precip_file": annual_file("prc", experiment),
         "precip_var": "prc",
-        "amoc_segments": [
-            {
-                "file": "AMOC_4models_hist_ssp585.nc",
-                "variable": "CESM2",
-                "year_start": 1850,
-            },
-        ],
-        "amoc_note": (
-            "1850-2100 continuous from AMOC_4models_hist_ssp585.nc (CESM2); "
-            "the former 1950-2000 gap is filled."
-        ),
-    },
-    {
-        "experiment": "abrupt-4xCO2",
-        "tas_file": "tas_annual_CESM2_abrupt-4xCO2.nc",
-        "precip_file": "prc_annual_CESM2_abrupt-4xCO2.nc",
-        "precip_var": "prc",
-        "amoc_segments": [{"variable": "abrupt_4xCO2", "year_start": 1}],
-        "amoc_note": "AMOC first 100 years mapped to run years 1-100; NaN after.",
-    },
-    {
-        "experiment": "piControl",
-        "tas_file": "tas_annual_CESM2_piControl.nc",
-        "precip_file": "prc_annual_CESM2_piControl.nc",
-        "precip_var": "prc",
-        "amoc_segments": [{"variable": "piControl", "year_start": 700}],
-        "amoc_note": "AMOC first 100 years mapped to run years 700-799.",
-    },
-    {
-        "experiment": "u03-hos",
-        "tas_file": "tas_annual_CESM2_u03-hos.nc",
-        "precip_file": "prc_annual_CESM2_u03-hos.nc",
-        "precip_var": "prc",
-        "amoc_segments": [{"variable": "hosing_0.3Sv_uniform", "year_start": 1850}],
-        "amoc_note": "AMOC first 100 years mapped to run years 1850-1949; NaN after.",
-    },
-    {
-        "experiment": "hosing-0.1Sv-greenland",
-        "tas_file": None,
-        "precip_file": None,
-        "precip_var": None,
-        "amoc_segments": [{"variable": "hosing_0.1Sv_greenland", "year_start": 1}],
-        "amoc_note": "No gridded tas; AMOC on year index 1-100 (not calendar years).",
-    },
+    }
+    for experiment in EXPERIMENTS
 ]

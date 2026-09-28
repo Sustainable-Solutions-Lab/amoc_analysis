@@ -22,7 +22,7 @@ from scipy import stats
 
 import data_loader as dl
 
-RUNS = ["historical-ssp585", "abrupt-4xCO2", "piControl", "u03-hos"]
+RUNS = list(dl.EXPERIMENTS)
 
 # Scalar predictors: variable name -> (short label, the predictor's own units).
 # A regression coefficient then has units [predictand units] / [predictor units].
@@ -69,35 +69,27 @@ ORTHOGONAL_COLUMNS = {
 }
 
 # Gridded predictands (response fields). Each maps every run to the processed
-# file and variable that supplies the field for that run. Precipitation is
-# convective `prc` uniformly for all runs. For historical-ssp585 the r1->r4
-# member splice (historical r1i1p1f1, ssp585 r4i1p1f1) is identical for `prc`,
-# `tas`, and AMOC, so predictand and predictors stay mutually consistent.
+# file and variable that supplies the field for that run; all three fields exist
+# for every run. Precipitation: ``prc`` is convective (CAM PRECC) and ``pr`` total
+# (CAM PRECT), both kg m-2 s-1.
 PREDICTANDS = {
     "tas": {
         "label": "tas",
         "units": "K",
         "cmap": "RdBu_r",  # warm (positive) = red
-        "by_run": {r: {"file": f"tas_annual_CESM2_{r}.nc", "var": "tas"} for r in RUNS},
+        "by_run": {r: {"file": dl.annual_file("tas", r), "var": "tas"} for r in RUNS},
     },
     "prc": {
         "label": "prc",
         "units": "kg m-2 s-1",
         "cmap": "RdBu",  # wetter (positive) = blue, drier = red (precip convention)
-        "by_run": {
-            r: {"file": f"prc_annual_CESM2_{r}.nc", "var": "prc"} for r in RUNS
-        },
+        "by_run": {r: {"file": dl.annual_file("prc", r), "var": "prc"} for r in RUNS},
     },
-    # Total precipitation, available for only two runs (no piControl/u03-hos). A
-    # separate 2-run analysis; build_pooled derives its run set from these by_run keys.
     "pr": {
         "label": "pr",
         "units": "kg m-2 s-1",
         "cmap": "RdBu",
-        "by_run": {
-            "historical-ssp585": {"file": "pr_annual_CESM2_historical-ssp585.nc", "var": "pr"},
-            "abrupt-4xCO2": {"file": "pr_annual_CESM2_abrupt-4xCO2.nc", "var": "pr"},
-        },
+        "by_run": {r: {"file": dl.annual_file("pr", r), "var": "pr"} for r in RUNS},
     },
 }
 
@@ -216,7 +208,7 @@ def build_pooled(runs=None, predictor_union=PREDICTOR_UNION, predictand=None, bl
     pred_parts, resp_parts = [], []
     for run in runs:
         scal = xr.open_dataset(
-            os.path.join(dl.PROCESSED_DIR, f"scalars_annual_CESM2_{run}.nc")
+            os.path.join(dl.PROCESSED_DIR, dl.scalar_file(run))
         )[predictor_union]
         spec = predictand["by_run"][run]
         resp = xr.open_dataset(os.path.join(dl.PROCESSED_DIR, spec["file"]))[
@@ -261,7 +253,7 @@ def build_pooled_monthly(
     pred_parts, resp_parts = [], []
     for run in runs:
         scal = xr.open_dataset(
-            os.path.join(dl.PROCESSED_DIR, f"scalars_annual_CESM2_{run}.nc")
+            os.path.join(dl.PROCESSED_DIR, dl.scalar_file(run))
         )[predictor_union]
         var = predictand["by_run"][run]["var"]
         resp = (
@@ -296,7 +288,7 @@ def build_pooled_scalar(
     """Pool a scalar response and the scalar predictors across runs onto one axis.
 
     Like :func:`build_pooled`, but the response is a scalar series read from the
-    same ``scalars_annual_CESM2_{run}.nc`` file as the predictors (e.g.
+    same ``data_loader.scalar_file(run)`` file as the predictors (e.g.
     ``precip_max_lat``, the ITCZ proxy). For each run, only years where every
     predictor in ``predictor_union`` **and** ``response_var`` are present are kept
     (complete-case deletion); the kept years are then concatenated across runs.
@@ -307,7 +299,7 @@ def build_pooled_scalar(
     pred_parts, resp_parts = [], []
     for run in runs:
         ds = xr.open_dataset(
-            os.path.join(dl.PROCESSED_DIR, f"scalars_annual_CESM2_{run}.nc")
+            os.path.join(dl.PROCESSED_DIR, dl.scalar_file(run))
         )
         scal = ds[predictor_union]
         resp = ds[response_var]
