@@ -2,8 +2,9 @@
 
 Builds one pooled sample (years with all predictors present, across the nine CESM1
 simulations), then for each selected predictor set fits a per-grid-point OLS and
-writes stippled coefficient maps (PDF) plus the coefficient fields (NetCDF) to
-``data/output/regression/``. By default only sets 5 & 10 are run (pass
+writes the coefficient fields (NetCDF) to ``data/output/regression/<predictand>/``
+and stippled coefficient maps to one PDF book per set, with one page per
+predictand, in ``data/output/regression/[decadal10/]``. By default only sets 5 & 10 are run (pass
 ``--all-sets`` for all ten) and only the decadal10 smoothing (pass ``--do-annuals``
 to also run the annual variant).
 
@@ -14,6 +15,8 @@ import argparse
 import os
 import sys
 
+from matplotlib.backends.backend_pdf import PdfPages
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import data_loader as dl
@@ -22,8 +25,9 @@ from output import plot_set
 
 OUT_BASE = os.path.join(dl._REPO_ROOT, "data", "output", "regression")
 
-# Predictands to analyze (each writes to its own subdirectory).
-PREDICTAND_NAMES = ["tas", "prc", "pr"]
+# Predictands to analyze: every loader variable (each writes its NetCDF to its own
+# subdirectory and one page per set book).
+PREDICTAND_NAMES = list(reg.PREDICTANDS)
 
 CAVEATS = """Regression outputs: pooled per-grid-point OLS of a gridded predictand.
 
@@ -44,12 +48,22 @@ CAVEATS = """Regression outputs: pooled per-grid-point OLS of a gridded predicta
   thus p-values) are far more trustworthy.
 - Coefficient units are [predictand units] / [predictor units] (predictor units:
   Tglob, dT_NS in K; AMOC in Sv).
-- 'prc' is CONVECTIVE precipitation (CAM PRECC); 'pr' is TOTAL precipitation
-  (CAM PRECT); both kg m-2 s-1, all nine runs.
+- Predictands: every variable in data_loader.VARIABLES (all CAM fields in the
+  input files plus derived fields such as pr_minus_evap); each variable's units
+  and definition are in its NetCDF attributes. 'prc' is CONVECTIVE precipitation
+  (CAM PRECC); 'pr' is TOTAL precipitation (CAM PRECT); precipitation rates are
+  kg m-2 s-1.
 """
 
 
-def run_for_predictand(name, smoothing, all_sets):
+def set_labels(set_def):
+    """File-name tag for a predictor set, e.g. ``Tglob-AMOC``."""
+    return "-".join(reg.PREDICTORS[p]["tag"] for p in set_def["predictors"])
+
+
+def run_for_predictand(name, smoothing, all_sets, books):
+    """Fit every selected set for predictand ``name``; write each fit's NetCDF and
+    add its maps as a page of ``books[set number]`` (an open ``PdfPages``)."""
     predictand = reg.PREDICTANDS[name]
     tag = smoothing["tag"]
     out_dir = os.path.join(OUT_BASE, name, smoothing["subdir"])
@@ -63,7 +77,7 @@ def run_for_predictand(name, smoothing, all_sets):
     print(f"\n[{name}/{tag}] pooled sample: n={predictors.sizes['sample']}  per-run={per_run}")
     print(f"[{name}/{tag}] VIF (3-predictor union):", {k: round(v, 2) for k, v in vif.items()})
 
-    run_label = f"predictand={name}; smoothing={tag}; pooled: " + ", ".join(predictand["by_run"])
+    run_label = f"predictand={name}; smoothing={tag}; pooled: " + ", ".join(reg.RUNS)
     for set_def in reg.select_predictor_sets(all_sets):
         names = set_def["predictors"]
         fit = reg.fit_grid_ols(predictors[names], response)
@@ -79,14 +93,13 @@ def run_for_predictand(name, smoothing, all_sets):
                 "to these means."
             )
 
-        labels = "-".join(reg.PREDICTORS[p]["tag"] for p in names)
-        pdf = os.path.join(out_dir, f"coef_set{set_def['number']}_{labels}.pdf")
+        labels = set_labels(set_def)
         nc = os.path.join(out_dir, f"coef_set{set_def['number']}_{labels}.nc")
-        plot_set(fit, set_def, run_label, pdf, predictand, centering)
+        plot_set(fit, set_def, run_label, books[set_def["number"]], predictand, centering)
         fit.to_netcdf(nc)
         print(
             f"[{name}/{tag}] set {set_def['number']} ({labels}): nobs={fit.attrs['nobs']} "
-            f"-> {os.path.relpath(pdf, OUT_BASE)}"
+            f"-> {os.path.relpath(nc, OUT_BASE)}"
         )
 
     with open(os.path.join(out_dir, "README.txt"), "w") as f:
@@ -104,10 +117,22 @@ def main():
         help="also run the annual (interannual) variant (default: decadal10 only)",
     )
     args = parser.parse_args()
-    for name in PREDICTAND_NAMES:
-        for smoothing in reg.select_smoothings(args.do_annuals):
-            run_for_predictand(name, smoothing, args.all_sets)
-    print(f"\nDone. Outputs in {OUT_BASE}/<predictand>/[decadal10/]")
+    set_defs = reg.select_predictor_sets(args.all_sets)
+    for smoothing in reg.select_smoothings(args.do_annuals):
+        book_dir = os.path.join(OUT_BASE, smoothing["subdir"])
+        os.makedirs(book_dir, exist_ok=True)
+        book_paths = {
+            s["number"]: os.path.join(book_dir, f"coef_set{s['number']}_{set_labels(s)}.pdf")
+            for s in set_defs
+        }
+        books = {number: PdfPages(path) for number, path in book_paths.items()}
+        for name in PREDICTAND_NAMES:
+            run_for_predictand(name, smoothing, args.all_sets, books)
+        for number, book in books.items():
+            book.close()
+            print(f"wrote book {os.path.relpath(book_paths[number], OUT_BASE)} "
+                  f"({len(PREDICTAND_NAMES)} pages, one per predictand)")
+    print(f"\nDone. Books in {OUT_BASE}/[decadal10/]; NetCDF in {OUT_BASE}/<predictand>/[decadal10/]")
 
 
 if __name__ == "__main__":

@@ -39,7 +39,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import data_loader as dl
 import regression as reg
-from output import DATA_CRS, PROJECTION, plot_coefficient_map
+from output import DATA_CRS, PROJECTION, draw_coastlines, plot_coefficient_map
 
 import matplotlib.pyplot as plt
 
@@ -97,7 +97,7 @@ def plot(a, a_p, b, b_p, ratio, predictand, out_pdf):
         colors="black", linewidths=0.6, transform=DATA_CRS,
     )
     ax.clabel(cs, fmt="%d", fontsize=6)
-    ax.coastlines(linewidth=0.5)
+    draw_coastlines(ax)
     ax.set_global()
     gl = ax.gridlines(draw_labels=True, linewidth=0.3, color="gray", alpha=0.4)
     gl.top_labels = gl.right_labels = False

@@ -1,17 +1,22 @@
 """Plot regression-coefficient maps with significance stippling.
 
 Coefficient maps use a diverging colormap with symmetric bounds (white = 0, per
-the project plotting conventions) and Cartopy coastlines. Cells where the
-coefficient is not significant at p < 0.05 are stippled with hatching.
+the project plotting conventions) and simplified Natural Earth coastlines
+(``draw_coastlines``). Cells where the coefficient is not significant at
+p < 0.05 are stippled with hatching.
 """
 
 import matplotlib
 
 matplotlib.use("Agg")
+import functools
+
 import cartopy.crs as ccrs
+import cartopy.feature as cfeature
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
+import shapely
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.lines import Line2D
 from scipy import stats
@@ -24,6 +29,29 @@ MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
 SIGNIFICANCE_P = 0.05
 PROJECTION = ccrs.EqualEarth()  # default for all maps (UN guidance)
 DATA_CRS = ccrs.PlateCarree()
+
+# Coarse coastline: Natural Earth 110m coastline lines, Douglas-Peucker simplified
+# with a tolerance of COASTLINE_TOLERANCE degrees (lon/lat), dropping lines shorter
+# than COASTLINE_MIN_LENGTH degrees (small islands). Still finer than the
+# 1.9 x 2.5 deg model grid, with ~1/5 the vertices of the 110m set, so vector
+# coastlines stay small in many-panel PDFs.
+COASTLINE_TOLERANCE = 1.0
+COASTLINE_MIN_LENGTH = 5.0
+
+
+@functools.cache
+def coarse_coastline():
+    """Simplified global coastline as an array of Shapely LineStrings (lon/lat)."""
+    lines = shapely.get_parts(np.array(list(
+        cfeature.NaturalEarthFeature("physical", "coastline", "110m").geometries())))
+    return shapely.simplify(lines[shapely.length(lines) >= COASTLINE_MIN_LENGTH],
+                            COASTLINE_TOLERANCE)
+
+
+def draw_coastlines(ax):
+    """Draw ``coarse_coastline`` on a Cartopy map ``ax``."""
+    ax.add_geometries(coarse_coastline(), crs=DATA_CRS, facecolor="none",
+                      edgecolor="black", linewidth=0.5)
 
 # Line-plot convention for cases: CO2 level sets the line style (1x solid,
 # 2x dashed, 4x dotted) and hosing sets the color (-0.3 Sv red, 0 black,
@@ -91,7 +119,7 @@ def plot_coefficient_map(coef, pvalue, title, units, ax, cmap="RdBu_r", bound=No
         hatches=["...."],
         transform=DATA_CRS,
     )
-    ax.coastlines(linewidth=0.5)
+    draw_coastlines(ax)
     ax.set_global()
     gl = ax.gridlines(draw_labels=True, linewidth=0.3, color="gray", alpha=0.4)
     gl.top_labels = gl.right_labels = False
@@ -101,8 +129,9 @@ def plot_coefficient_map(coef, pvalue, title, units, ax, cmap="RdBu_r", bound=No
     return mesh
 
 
-def plot_set(fit, set_def, run_label, out_path, predictand, centering=None):
-    """Render all predictor coefficient maps for one regression set to ``out_path``.
+def plot_set(fit, set_def, run_label, pdf, predictand, centering=None):
+    """Render all predictor coefficient maps for one regression set as one page of
+    ``pdf`` (a ``PdfPages`` book, so several predictands collect into one file).
 
     One panel per predictor (the intercept is omitted). Stippling marks p > 0.05.
     ``predictand`` is a ``regression.PREDICTANDS`` entry (label + units), used for
@@ -152,8 +181,7 @@ def plot_set(fit, set_def, run_label, out_path, predictand, centering=None):
         fontsize=11,
     )
     fig.tight_layout(rect=(0, 0, 1, 0.97))
-    fig.savefig(out_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
+    _save_figure(fig, pdf=pdf)
 
 
 def plot_set_monthly(fit, set_def, run_label, out_path, predictand, centering=None,
@@ -228,7 +256,7 @@ def plot_eof_patterns(eof_ds, title, units, out_path, cmap="RdBu_r", max_pattern
         bound = _symmetric_bound(e.values)
         mesh = ax.pcolormesh(e["lon"], e["lat"], e, cmap=cmap, vmin=-bound,
                              vmax=bound, shading="auto", transform=DATA_CRS)
-        ax.coastlines(linewidth=0.5)
+        draw_coastlines(ax)
         ax.set_global()
         ax.set_title(f"EOF {i + 1}  ({var[i] * 100:.1f}% var)", fontsize=10)
         cbar = fig.colorbar(mesh, ax=ax, shrink=0.7, pad=0.02)
@@ -700,3 +728,68 @@ def plot_tglob_vs_amoc(annual, decadal, out_path):
               bbox_to_anchor=(0.5, -0.1), frameon=False)
     fig.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
+
+
+# The four pages drawn per variable by ``plot_case_grid_book``: (page title, map
+# of the (co2, hosing) grid to the plotted field). Differences broadcast over the
+# grid, so the reference panels of each difference page are identically zero.
+CASE_GRID_PAGES = [
+    ("raw", lambda grid: grid),
+    ("minus piControl (1xCO2, 0 Sv)", lambda grid: grid - grid.sel(co2=1, hosing=0.0)),
+    ("minus 1xCO2 at the same hosing (CO2 effect)", lambda grid: grid - grid.sel(co2=1)),
+    ("minus no hosing at the same CO2 (hosing effect)", lambda grid: grid - grid.sel(hosing=0.0)),
+]
+
+
+def plot_case_grid_page(field, title, cmap, vmin, vmax, pdf, rasterized):
+    """One page of ``pdf``: a 3 x 3 map grid of ``field`` (``(co2, hosing, lat,
+    lon)``, laid out like ``data_loader.CASE_GRID``) on a shared color scale.
+
+    Each panel is titled with its case name and area-weighted global mean. With
+    ``rasterized`` the filled fields are embedded as raster images (small PDF);
+    otherwise everything is vector.
+    """
+    fig, axes = plt.subplots(
+        len(dl.CO2_LEVELS), len(dl.HOSING_LEVELS), figsize=(15, 9.5),
+        subplot_kw={"projection": PROJECTION}, layout="constrained",
+    )
+    units = field.attrs["units"]
+    for i, co2 in enumerate(dl.CO2_LEVELS):
+        for j, hosing in enumerate(dl.HOSING_LEVELS):
+            ax, panel = axes[i, j], field.sel(co2=co2, hosing=hosing)
+            mesh = ax.pcolormesh(
+                panel["lon"], panel["lat"], panel, cmap=cmap, vmin=vmin, vmax=vmax,
+                shading="auto", transform=DATA_CRS, rasterized=rasterized,
+            )
+            draw_coastlines(ax)
+            ax.set_global()
+            ax.set_title(f"{dl.CASE_GRID[i][j]}   global mean = "
+                         f"{float(dl.global_mean(panel)):.4g} {units}", fontsize=10)
+    cbar = fig.colorbar(mesh, ax=axes, orientation="horizontal", shrink=0.5,
+                        pad=0.02, aspect=40)
+    cbar.set_label(f"{field.name} ({units})")
+    fig.suptitle(title, fontsize=12)
+    _save_figure(fig, pdf=pdf)
+
+
+def plot_case_grid_book(grid, pdf, rasterized):
+    """Append the four ``CASE_GRID_PAGES`` for one variable to ``pdf``.
+
+    ``grid`` is a ``data_loader.case_grid_time_mean`` result. The raw page uses
+    ``viridis`` scaled to the 1st-99th percentile over all nine panels; the
+    difference pages use a diverging map with symmetric bounds (±99th percentile
+    of |difference| over the page; white = 0): ``RdBu`` (wet = blue) for water
+    fluxes in kg m-2 s-1, else ``RdBu_r``.
+    """
+    header = (f"{grid.name}: {grid.attrs['long_name']} ({grid.attrs['units']}), "
+              f"CESM1 mean {grid.attrs['time_mean']}")
+    diverging = "RdBu" if grid.attrs["units"] == "kg m-2 s-1" else "RdBu_r"
+    (raw_label, _), *difference_pages = CASE_GRID_PAGES
+    low, high = np.nanpercentile(grid.values, [1, 99])
+    plot_case_grid_page(grid, f"{header}\n{raw_label}", "viridis", low, high,
+                        pdf, rasterized)
+    for label, transform in difference_pages:
+        field = transform(grid).assign_attrs(grid.attrs).rename(grid.name)
+        bound = _symmetric_bound(field.values)
+        plot_case_grid_page(field, f"{header}\n{label}", diverging, -bound, bound,
+                            pdf, rasterized)

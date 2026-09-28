@@ -113,14 +113,17 @@ rather than hiding them.
 - **Map projection**: Use the Equal Earth projection for all maps by default
   (following UN guidance): `ccrs.EqualEarth()`, available as
   `output.PROJECTION`. Draw gridded data with `transform=ccrs.PlateCarree()`
-  (`output.DATA_CRS`), and call `ax.coastlines()`. Example:
+  (`output.DATA_CRS`), and draw coastlines with `output.draw_coastlines(ax)`
+  (Natural Earth 110m coastline simplified to 1°, keeping vector PDFs small)
+  rather than `ax.coastlines()`. Example:
   ```python
   import matplotlib.pyplot as plt
-  import cartopy.crs as ccrs
+
+  from output import PROJECTION, draw_coastlines
 
   fig = plt.figure()
-  ax = plt.axes(projection=ccrs.EqualEarth())
-  ax.coastlines()
+  ax = plt.axes(projection=PROJECTION)
+  draw_coastlines(ax)
   ```
 - **Multi-case map figures**: Any figure showing maps for several cases uses a
   CO₂ × hosing grid, available as `data_loader.CASE_GRID`. Rows are CO₂ level

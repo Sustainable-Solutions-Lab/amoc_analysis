@@ -156,31 +156,71 @@ hosing = `m03Sv`, 0 Sv, `p03Sv` (left to right).
   `TREFHT` 287.3 → 288.8 K over 100 years), unlike the control (~286.9 K). The file
   name, not the attribute, identifies the run.
 
-### Variable mapping and units (`src/data_loader.py`)
+### Analysis variables and units (`src/data_loader.py`)
 
-The analysis uses CMIP variable names. `data_loader.VARIABLES` maps them to
-their CAM sources and converts the units:
+`data_loader.VARIABLES` defines **46 analysis variables**. Each is available for
+all nine runs, and each is a regression predictand. Every variable has a
+`definition` (a formula in CAM field names), `units` and a `long_name`, and each
+loaded field records these, plus its source file, as attributes.
 
-| Analysis var | CAM source | Conversion | Output units |
+- **CMIP names (3):** `tas` = `TREFHT` (K); `prc` = `PRECC` × 1000 (convective
+  precipitation); `pr` = `PRECT` × 1000 (total precipitation, `PRECC` +
+  `PRECL`).
+- **CAM names (36):** every other field in the files keeps its CAM name (table
+  above). Precipitation rates (`PRECL`, `PRECSH`, `PRECSC`, `PRECSL`) are
+  multiplied by 1000 kg m⁻³, like `pr` and `prc`. All other fields keep their
+  native units.
+- **Derived (7):**
+
+| Variable | Definition | Units | Meaning |
 | --- | --- | --- | --- |
-| `tas` | `TREFHT` | none | K |
-| `prc` (convective precip) | `PRECC` | × 1000 kg m⁻³ | kg m⁻² s⁻¹ |
-| `pr` (total precip) | `PRECT` (= `PRECC` + `PRECL`) | × 1000 kg m⁻³ | kg m⁻² s⁻¹ |
+| `pr_minus_evap` | `PRECT` × 1000 − `QFLX` | kg m⁻² s⁻¹ | precipitation minus evaporation (P − E) |
+| `prsn` | (`PRECSC` + `PRECSL`) × 1000 | kg m⁻² s⁻¹ | snowfall (water equivalent) |
+| `toa_net_down` | `FSNT` − `FLNT` | W m⁻² | net downward radiation at top of model |
+| `sfc_net_energy_down` | `FSNS` − `FLNS` − `LHFLX` − `SHFLX` | W m⁻² | net downward surface energy flux (radiative + turbulent) |
+| `cloud_radiative_effect` | `SWCF` + `LWCF` | W m⁻² | net cloud radiative effect at top of model |
+| `diurnal_temperature_range` | `TREFMXAV` − `TREFMNAV` | K | mean diurnal temperature range |
+| `planetary_albedo` | 1 − `FSNT` / `SOLIN` | 1 | planetary albedo (from annual-mean fluxes) |
+
+As checks, the control's global means are P − E ≈ 0 (−0.0006 mm day⁻¹), a top-of-model
+imbalance of −0.3 W m⁻² and a surface energy flux of +0.4 W m⁻².
 
 CAM precipitation is a liquid-water-equivalent rate, and in these files the
 `m/s` label is correct. The global-mean `PRECT` (2.86 mm day⁻¹) equals the
 global-mean evaporation `QFLX`, so multiplying by the density of water gives the
-CMIP mass flux. The old CESM2 CAM files behaved differently: their precipitation
-was labeled `m/s` but already held kg m⁻² s⁻¹. Every run supplies all three
-variables, so the `prc` and `pr` analyses both pool all nine runs.
+CMIP mass flux. (The old CESM2 CAM files were different: their precipitation was
+labeled `m/s` but already held kg m⁻² s⁻¹.)
+
+**Corrected source-attribute errors:**
+
+- `RHREFHT` is labeled `fraction`, but its values run from about 20 to 110, so it
+  is in **%**.
+- `SRFRAD` is labeled "Net radiative flux at surface", but it equals
+  `FSNS` + `FLDS` to within 0.04 W m⁻², i.e. absorbed shortwave plus
+  *downwelling* longwave, which is not a net flux. The net surface radiation is
+  `FSNS` − `FLNS`.
+
+None of the 39 fields contains missing values. Four fields have cells whose
+value never changes in any run over 2051–2150:
+
+- `SNOWHICE` (9740 cells): no sea ice ever forms there.
+- `SNOWHLND` (9450 cells): ocean, plus ice-sheet cells held at the land model's
+  1 m snow cap.
+- `PRECSC` (5530 cells, 46°S–37°N): no convective snow.
+- `CLDLOW` (356 cells): probably high terrain such as Tibet and Antarctica, where
+  CAM defines no low cloud (not checked cell by cell).
+
+At those cells the fit is exact, so every slope coefficient and its standard error
+are 0, and the t- and p-values are undefined (NaN). They show as unstippled
+white on the maps.
 
 Loader entry points:
 
 - `open_experiment(case)` returns the raw Dataset, with all 39 CAM fields, on an
   integer `year` dimension. Use it for any field not in `VARIABLES`.
-- `load_annual_field(case, var)` returns a `(year, lat, lon)` DataArray in CMIP
-  names and units, with provenance attributes (`source_file`, `source_variable`,
-  `original_units`, `conversion_factor`).
+- `load_annual_field(case, var)` returns a `(year, lat, lon)` DataArray of any
+  `VARIABLES` entry, in the analysis units. Its attributes are `units`,
+  `long_name`, `definition` and `source_file`.
 - `amoc_strength_on_years(case, years)` returns the AMOC series aligned to `years`
   (NaN where not covered).
 
@@ -232,14 +272,6 @@ expected if 2051 is where they branched from the control. Correlating the
 control's AMOC with North Atlantic temperature gives no clear answer, because
 the control's AMOC variability is small.
 
-### Processed annual fields (`data/processed/`, git-ignored)
-
-`scripts/make_annual_means.py` writes one file per variable per run,
-`{tas,prc,pr}_annual_CESM1_{case}.nc` (27 files). Each is a `(year, lat, lon)`
-field in CMIP names and units. The variable carries provenance attributes, and
-the file's global attributes record `source_id`, `experiment`, `co2_multiple` and
-`hosing_sv`. No averaging happens here, because the inputs are already annual.
-
 ### Scalar time series (`data/processed/`, git-ignored)
 
 `scripts/make_scalar_timeseries.py` writes one `scalars_annual_CESM1_{case}.nc` per
@@ -275,9 +307,9 @@ handle the FV grid's half-width polar cells at ±90°.
 `scripts/run_regressions.py` regresses a gridded annual-mean **predictand** (one
 time series per grid cell) on the scalar indices `tas_global_mean` (Tglob, K),
 `tas_interhemispheric_diff` (dT_NS, K) and `amoc_strength` (AMOC at 26.5°N, Sv).
-It runs for three predictands, each available for all nine runs: **`tas`**
-(temperature, K), **`prc`** (convective precipitation, kg m⁻² s⁻¹) and **`pr`**
-(total precipitation, kg m⁻² s⁻¹). Outputs go to `data/output/regression/<predictand>/`.
+It runs for **every analysis variable** (46 predictands, see
+[Analysis variables](#analysis-variables-and-units-srcdata_loaderpy)). Each
+predictand's field is read directly from the input files.
 
 The years of all nine CESM1 runs (the 3 × 3 CO₂ × hosing matrix) are **pooled
 into one fit per grid cell**, with a single common intercept and no per-run fixed
@@ -319,10 +351,19 @@ of the regression scripts to produce all ten:
   interaction coefficient is the same as in the uncentered form.
 
 Coefficient maps (`src/output.py`) use the Equal Earth projection and a diverging
-colormap with symmetric bounds (white = 0; `RdBu_r` for tas with warm = red,
-`RdBu` for precipitation with wet = blue). They **stipple cells where p > 0.05**.
-Each set writes a PDF and a NetCDF of the coefficient/SE/t/p/R² fields, plus a
-caveats `README.txt`. `scripts/plot_predictor_scatter.py` and
+colormap with symmetric bounds (white = 0). Water-related fields use `RdBu`, so
+wetter or moister is blue (`regression.WET_IS_BLUE`). All other fields use
+`RdBu_r`, so positive is red. The maps **stipple cells where p > 0.05**.
+
+**Outputs.**
+
+- Each predictor set is **one PDF book**, with one page per predictand (46
+  pages): `data/output/regression/decadal10/coef_set5_Tglob-AMOC.pdf` and
+  `…/coef_set10_Tglob-AMOC-TglobxAMOC.pdf`. The annual variant's books (with
+  `--do-annuals`) go directly in `data/output/regression/`.
+- The coefficient/SE/t/p/R² fields stay as one NetCDF per predictand and set in
+  `data/output/regression/<predictand>/[decadal10/]`, with a caveats
+  `README.txt`. `scripts/plot_predictor_scatter.py` and
 `scripts/plot_scalar_timeseries.py` (predictor scatter and time-series plots in
 `data/output/regression/`) have not yet been re-run on CESM1.
 
@@ -412,9 +453,8 @@ to one roughly independent sample (pooled **n = 90**, 10 per run), so the nomina
 OLS degrees of freedom become honest. This resolves the autocorrelation caveat of
 the annual variant, at the cost of sample size. Quadratic and product terms are
 formed from the *filtered* bases (filter, then square), which gives the genuinely
-low-frequency response surface. Decadal results go to
-`data/output/regression/<predictand>/decadal10/`. The annual outputs (produced
-only with `--do-annuals`) use the same filenames in the top-level `<predictand>/`.
+low-frequency response surface. Decadal results go to the `decadal10/` subdirectories. The annual outputs
+(produced only with `--do-annuals`) use the same filenames one level up.
 
 ### EOF / principal-component analysis (additive path)
 
@@ -576,9 +616,8 @@ After placing the input files in `data/input/` (see [Data](#data)) and installin
 dependencies, run, in order:
 
 ```bash
-python scripts/make_annual_means.py        # data/processed/{tas,prc,pr}_annual_CESM1_*.nc
 python scripts/make_scalar_timeseries.py   # data/processed/scalars_annual_CESM1_*.nc
-python scripts/run_regressions.py          # data/output/regression/{tas,prc,pr}/[decadal10/]coef_set*.{pdf,nc}
+python scripts/run_regressions.py          # data/output/regression/[decadal10/]coef_set*.pdf books; <predictand>/[decadal10/]coef_set*.nc
 python scripts/plot_predictor_scatter.py   # data/output/regression/predictor_scatter.pdf
 python scripts/plot_scalar_timeseries.py   # data/output/regression/predictor_timeseries.pdf
 python scripts/plot_tglob_vs_amoc.py       # data/output/regression/tglob_vs_amoc.pdf (AMOC vs Tglob, 9 cases)
@@ -624,9 +663,9 @@ much lighter for a LaTeX engine to load than the vector PDFs.
 
 ## Status
 
-Preprocessing (`scripts/make_annual_means.py`,
-`scripts/make_scalar_timeseries.py`), pooled per-grid-point regression analysis
-(`scripts/run_regressions.py`, sets 1–10 for tas, prc, and pr), predictor scatter
+Preprocessing (`scripts/make_scalar_timeseries.py`), pooled per-grid-point
+regression analysis (`scripts/run_regressions.py`, sets 1–10 for all 46 analysis
+variables), predictor scatter
 and time series (`scripts/plot_predictor_scatter.py`,
 `scripts/plot_scalar_timeseries.py`), the additive EOF / principal-component path
 (`scripts/run_eof_regressions.py`, built on `src/eof.py`), the decadal

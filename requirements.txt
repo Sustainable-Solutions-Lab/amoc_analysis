@@ -7,5 +7,6 @@ xarray
 netCDF4
 dask
 cartopy
+shapely
 pypdf
 PyMuPDF

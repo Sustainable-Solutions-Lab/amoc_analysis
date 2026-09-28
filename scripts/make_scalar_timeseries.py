@@ -9,8 +9,8 @@ holding, on the simulation's gridded year axis:
 - ``precip_centroid_lat_20``, ``precip_centroid_lat_30`` (deg N) —
   precipitation-mass centroid latitude (ITCZ proxy) over 20°S–20°N and 30°S–30°N
 
-Temperature and precipitation scalars are derived from the processed annual files,
-so run ``scripts/make_annual_means.py`` first.
+Temperature and precipitation scalars are computed from the gridded annual-mean
+input files via ``data_loader.load_annual_field``.
 
     python scripts/make_scalar_timeseries.py
 """
@@ -42,6 +42,7 @@ TAS_METADATA = {
 # The centroid integrates over both branches of a double ITCZ, so it varies
 # continuously (unlike the argmax, which jumps between the two branches).
 ITCZ_BANDS = [20.0, 30.0]
+PRECIP_VAR = "prc"  # convective precipitation (CAM PRECC)
 PRECIP_NOTE = (
     "ITCZ proxy = area- and precip-weighted mean latitude (precipitation-mass "
     "centroid) of the zonal-mean precip within the band. Precip source is "
@@ -52,28 +53,25 @@ PRECIP_NOTE = (
 def main():
     os.makedirs(dl.PROCESSED_DIR, exist_ok=True)
 
-    for sim in dl.SCALAR_SIMULATIONS:
-        experiment = sim["experiment"]
+    for experiment in dl.EXPERIMENTS:
         out_name = dl.scalar_file(experiment)
         out_path = os.path.join(dl.PROCESSED_DIR, out_name)
         print(f"building {out_name} ...", flush=True)
 
         data_vars = {}
 
-        # Temperature scalars from the annual tas file.
-        tas = xr.open_dataset(os.path.join(dl.PROCESSED_DIR, sim["tas_file"]))["tas"]
+        # Temperature scalars from the gridded annual tas.
+        tas = dl.load_annual_field(experiment, "tas")
         years = tas["year"].values
         gmean = dl.global_mean(tas).rename("tas_global_mean")
         idiff = dl.interhemispheric_difference(tas).rename("tas_interhemispheric_diff")
         for da in (gmean, idiff):
-            da.attrs = {**TAS_METADATA[da.name], "source_file": sim["tas_file"]}
+            da.attrs = {**TAS_METADATA[da.name], "source_file": tas.attrs["source_file"]}
             data_vars[da.name] = da
 
-        # ITCZ centroid(s) from the gridded annual precip file (shares the run's
-        # year axis, so it slots into the same Dataset).
-        precip = xr.open_dataset(
-            os.path.join(dl.PROCESSED_DIR, sim["precip_file"])
-        )[sim["precip_var"]]
+        # ITCZ centroid(s) from the gridded annual convective precipitation
+        # (shares the run's year axis, so it slots into the same Dataset).
+        precip = dl.load_annual_field(experiment, PRECIP_VAR)
         for band in ITCZ_BANDS:
             name = f"precip_centroid_lat_{int(band)}"
             cen = dl.tropical_precip_centroid_lat(precip, band).rename(name)
@@ -85,8 +83,8 @@ def main():
                 ),
                 "band_deg": band,
                 "note": PRECIP_NOTE,
-                "source_file": sim["precip_file"],
-                "source_variable": sim["precip_var"],
+                "source_file": precip.attrs["source_file"],
+                "source_variable": PRECIP_VAR,
             }
             data_vars[name] = cen
 
@@ -114,7 +112,7 @@ def main():
             flush=True,
         )
 
-    print(f"\nDone. {len(dl.SCALAR_SIMULATIONS)} files written to {dl.PROCESSED_DIR}")
+    print(f"\nDone. {len(dl.EXPERIMENTS)} files written to {dl.PROCESSED_DIR}")
 
 
 if __name__ == "__main__":

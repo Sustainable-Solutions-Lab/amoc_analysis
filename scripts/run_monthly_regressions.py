@@ -52,7 +52,7 @@ def run_for_predictand(name, smoothing, all_sets, vector):
     tag = smoothing["tag"]
     out_dir = os.path.join(OUT_BASE, name, smoothing["subdir"])
     os.makedirs(out_dir, exist_ok=True)
-    run_label = f"predictand={name}; smoothing={tag}; pooled: " + ", ".join(predictand["by_run"])
+    run_label = f"predictand={name}; smoothing={tag}; pooled: " + ", ".join(reg.RUNS)
 
     for set_def in reg.select_predictor_sets(all_sets):
         names = set_def["predictors"]

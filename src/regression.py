@@ -68,29 +68,21 @@ ORTHOGONAL_COLUMNS = {
     ),
 }
 
-# Gridded predictands (response fields). Each maps every run to the processed
-# file and variable that supplies the field for that run; all three fields exist
-# for every run. Precipitation: ``prc`` is convective (CAM PRECC) and ``pr`` total
-# (CAM PRECT), both kg m-2 s-1.
+# Gridded predictands (response fields): every ``data_loader.VARIABLES`` entry,
+# each available for all runs. Coefficient maps use a diverging colormap; for
+# water-related fields wetter/moister (positive) is blue, otherwise positive is red.
+WET_IS_BLUE = {
+    "prc", "pr", "PRECL", "PRECSH", "PRECSC", "PRECSL", "prsn", "pr_minus_evap",
+    "QFLX", "LHFLX", "QREFHT", "RHREFHT", "TMQ", "SNOWHICE", "SNOWHLND",
+}
 PREDICTANDS = {
-    "tas": {
-        "label": "tas",
-        "units": "K",
-        "cmap": "RdBu_r",  # warm (positive) = red
-        "by_run": {r: {"file": dl.annual_file("tas", r), "var": "tas"} for r in RUNS},
-    },
-    "prc": {
-        "label": "prc",
-        "units": "kg m-2 s-1",
-        "cmap": "RdBu",  # wetter (positive) = blue, drier = red (precip convention)
-        "by_run": {r: {"file": dl.annual_file("prc", r), "var": "prc"} for r in RUNS},
-    },
-    "pr": {
-        "label": "pr",
-        "units": "kg m-2 s-1",
-        "cmap": "RdBu",
-        "by_run": {r: {"file": dl.annual_file("pr", r), "var": "pr"} for r in RUNS},
-    },
+    var: {
+        "label": var,
+        "units": spec["units"],
+        "long_name": spec["long_name"],
+        "cmap": "RdBu" if var in WET_IS_BLUE else "RdBu_r",
+    }
+    for var, spec in dl.VARIABLES.items()
 }
 
 # Predictor sets requested for analysis (column subsets of the predictor union).
@@ -186,9 +178,8 @@ def build_pooled(runs=None, predictor_union=PREDICTOR_UNION, predictand=None, bl
     For each run, keep only the years for which every predictor in
     ``predictor_union`` is present (intersection of non-NaN), then concatenate
     runs along a new ``sample`` dimension. ``predictand`` is an entry of
-    ``PREDICTANDS`` (defaults to ``tas``) giving the per-run response file/var.
-    ``runs`` defaults to the predictand's own ``by_run`` keys, so a predictand
-    defined on a subset of runs (e.g. total ``pr``, only 2 runs) pools just those.
+    ``PREDICTANDS`` (defaults to ``tas``); its field is read for each run with
+    ``data_loader.load_annual_field``. ``runs`` defaults to all ``RUNS``.
     Returns ``(predictors, response)`` where ``predictors`` is a Dataset of the
     scalar variables on ``sample`` and ``response`` has dims ``(sample, lat,
     lon)``. A ``run`` coordinate labels each sample's source simulation.
@@ -203,17 +194,14 @@ def build_pooled(runs=None, predictor_union=PREDICTOR_UNION, predictand=None, bl
     if predictand is None:
         predictand = PREDICTANDS["tas"]
     if runs is None:
-        runs = list(predictand["by_run"])
+        runs = RUNS
 
     pred_parts, resp_parts = [], []
     for run in runs:
         scal = xr.open_dataset(
             os.path.join(dl.PROCESSED_DIR, dl.scalar_file(run))
         )[predictor_union]
-        spec = predictand["by_run"][run]
-        resp = xr.open_dataset(os.path.join(dl.PROCESSED_DIR, spec["file"]))[
-            spec["var"]
-        ].rename(predictand["label"])
+        resp = dl.load_annual_field(run, predictand["label"])
 
         valid = scal.to_dataframe().dropna().index  # years with all predictors
         scal = scal.sel(year=valid)
@@ -245,17 +233,17 @@ def build_pooled_monthly(
     annual indices of the same year. Years with any predictor missing are dropped;
     with ``block`` set, each run's predictors and that month's response are
     block-averaged over ``block`` years before pooling (= the 10-year average of that
-    calendar month). ``runs`` defaults to the predictand's ``by_run`` keys.
+    calendar month). ``runs`` defaults to all ``RUNS``.
     """
     if runs is None:
-        runs = list(predictand["by_run"])
+        runs = RUNS
 
     pred_parts, resp_parts = [], []
     for run in runs:
         scal = xr.open_dataset(
             os.path.join(dl.PROCESSED_DIR, dl.scalar_file(run))
         )[predictor_union]
-        var = predictand["by_run"][run]["var"]
+        var = predictand["label"]
         resp = (
             xr.open_dataset(
                 os.path.join(dl.PROCESSED_DIR, f"{var}_monthly_CESM2_{run}.nc")
@@ -403,6 +391,10 @@ def fit_grid_ols(predictors, tas):
     Returns an xarray Dataset with per-parameter ``coef``, ``se``, ``tstat`` and
     ``pvalue`` (dims ``param, lat, lon``) plus ``r2`` (lat, lon) and scalar
     ``nobs``. ``param`` is ``["intercept", *predictor names]``.
+
+    The response is cast to float64: the CAM fields are float32, and squaring
+    near-zero values (e.g. ~1e-27 kg m-2 s-1 of snowfall) underflows in float32,
+    which would zero the total sum of squares while the float64 residuals do not.
     """
     names = list(predictors.data_vars)
     columns = np.column_stack([predictors[v].values for v in names])
@@ -411,7 +403,7 @@ def fit_grid_ols(predictors, tas):
     df = n - k
 
     lat, lon = tas["lat"], tas["lon"]
-    Z = tas.values.reshape(n, -1)  # (n, ncells)
+    Z = tas.values.reshape(n, -1).astype(np.float64)  # (n, ncells)
 
     XtX_inv = np.linalg.inv(X.T @ X)
     beta = XtX_inv @ (X.T @ Z)  # (k, ncells)

@@ -43,29 +43,104 @@ PROCESSED_DIR = os.path.join(_REPO_ROOT, "data", "processed")
 # the CMIP water mass flux (kg m-2 s-1).
 WATER_DENSITY = 1000.0
 
-# Analysis variable (CMIP name) -> CAM source variable, multiplicative conversion
-# to the output units, and output metadata.
+# Analysis variables. Each has a ``definition`` (a formula in CAM field names,
+# recorded as provenance), a ``compute`` function mapping the raw CAM Dataset to
+# the field, and output ``units``/``long_name``. Three CAM fields carry CMIP names
+# (tas, prc, pr); the other raw fields keep their CAM names, with precipitation
+# rates converted from m s-1 to kg m-2 s-1; derived fields are combinations.
+# Source-attribute mislabels corrected here: RHREFHT is labeled "fraction" but is
+# in percent (values ~20-110); SRFRAD ("Net radiative flux at surface") is
+# FSNS + FLDS (absorbed shortwave plus downwelling longwave), not a net flux.
+_CMIP_RENAMED_FIELDS = [
+    # (analysis name, CAM field, scale, units, long_name)
+    ("tas", "TREFHT", 1.0, "K", "Near-Surface Air Temperature"),
+    ("prc", "PRECC", WATER_DENSITY, "kg m-2 s-1", "Convective Precipitation"),
+    ("pr", "PRECT", WATER_DENSITY, "kg m-2 s-1", "Precipitation (total)"),
+]
+_CAM_FIELDS = [
+    # (CAM field, scale, units, long_name)
+    ("TREFMNAV", 1.0, "K", "Average of TREFHT daily minimum"),
+    ("TREFMXAV", 1.0, "K", "Average of TREFHT daily maximum"),
+    ("QREFHT", 1.0, "kg/kg", "Reference height specific humidity"),
+    ("RHREFHT", 1.0, "%", "Reference height relative humidity"),
+    ("PRECL", WATER_DENSITY, "kg m-2 s-1", "Large-scale (stable) precipitation (liq + ice)"),
+    ("PRECSH", WATER_DENSITY, "kg m-2 s-1", "Shallow convection precipitation"),
+    ("PRECSC", WATER_DENSITY, "kg m-2 s-1", "Convective snowfall (water equivalent)"),
+    ("PRECSL", WATER_DENSITY, "kg m-2 s-1", "Large-scale (stable) snowfall (water equivalent)"),
+    ("QFLX", 1.0, "kg m-2 s-1", "Surface water flux (evaporation)"),
+    ("LHFLX", 1.0, "W/m2", "Surface latent heat flux (upward)"),
+    ("SHFLX", 1.0, "W/m2", "Surface sensible heat flux (upward)"),
+    ("FSDS", 1.0, "W/m2", "Downwelling solar flux at surface"),
+    ("FSDSC", 1.0, "W/m2", "Clearsky downwelling solar flux at surface"),
+    ("FSNS", 1.0, "W/m2", "Net solar flux at surface (downward)"),
+    ("FSNSC", 1.0, "W/m2", "Clearsky net solar flux at surface (downward)"),
+    ("FLDS", 1.0, "W/m2", "Downwelling longwave flux at surface"),
+    ("FLDSC", 1.0, "W/m2", "Clearsky downwelling longwave flux at surface"),
+    ("FLNS", 1.0, "W/m2", "Net longwave flux at surface (upward)"),
+    ("FLNSC", 1.0, "W/m2", "Clearsky net longwave flux at surface (upward)"),
+    ("SRFRAD", 1.0, "W/m2", "Absorbed solar plus downwelling longwave at surface (FSNS + FLDS)"),
+    ("SOLIN", 1.0, "W/m2", "Solar insolation"),
+    ("FSNT", 1.0, "W/m2", "Net solar flux at top of model (downward)"),
+    ("FSNTC", 1.0, "W/m2", "Clearsky net solar flux at top of model (downward)"),
+    ("FLNT", 1.0, "W/m2", "Net longwave flux at top of model (upward)"),
+    ("FLNTC", 1.0, "W/m2", "Clearsky net longwave flux at top of model (upward)"),
+    ("FLUT", 1.0, "W/m2", "Upwelling longwave flux at top of model"),
+    ("FLUTC", 1.0, "W/m2", "Clearsky upwelling longwave flux at top of model"),
+    ("SWCF", 1.0, "W/m2", "Shortwave cloud forcing"),
+    ("LWCF", 1.0, "W/m2", "Longwave cloud forcing"),
+    ("CLDTOT", 1.0, "fraction", "Vertically-integrated total cloud"),
+    ("CLDLOW", 1.0, "fraction", "Vertically-integrated low cloud"),
+    ("CLDMED", 1.0, "fraction", "Vertically-integrated mid-level cloud"),
+    ("CLDHGH", 1.0, "fraction", "Vertically-integrated high cloud"),
+    ("TMQ", 1.0, "kg/m2", "Total (vertically integrated) precipitable water"),
+    ("SNOWHICE", 1.0, "m", "Water equivalent snow depth over sea ice"),
+    ("SNOWHLND", 1.0, "m", "Water equivalent snow depth over land"),
+]
+_DERIVED_FIELDS = [
+    # (analysis name, definition, compute, units, long_name)
+    ("pr_minus_evap", "PRECT * 1000 - QFLX",
+     lambda ds: ds["PRECT"] * WATER_DENSITY - ds["QFLX"],
+     "kg m-2 s-1", "Precipitation minus evaporation"),
+    ("prsn", "(PRECSC + PRECSL) * 1000",
+     lambda ds: (ds["PRECSC"] + ds["PRECSL"]) * WATER_DENSITY,
+     "kg m-2 s-1", "Snowfall (water equivalent)"),
+    ("toa_net_down", "FSNT - FLNT",
+     lambda ds: ds["FSNT"] - ds["FLNT"],
+     "W/m2", "Net downward radiation at top of model"),
+    ("sfc_net_energy_down", "FSNS - FLNS - LHFLX - SHFLX",
+     lambda ds: ds["FSNS"] - ds["FLNS"] - ds["LHFLX"] - ds["SHFLX"],
+     "W/m2", "Net downward surface energy flux (radiation + turbulent)"),
+    ("cloud_radiative_effect", "SWCF + LWCF",
+     lambda ds: ds["SWCF"] + ds["LWCF"],
+     "W/m2", "Net cloud radiative effect at top of model"),
+    ("diurnal_temperature_range", "TREFMXAV - TREFMNAV",
+     lambda ds: ds["TREFMXAV"] - ds["TREFMNAV"],
+     "K", "Mean diurnal temperature range"),
+    ("planetary_albedo", "1 - FSNT / SOLIN",
+     lambda ds: 1 - ds["FSNT"] / ds["SOLIN"],
+     "1", "Planetary albedo (annual mean fluxes)"),
+]
+
+
+def _scaled_field(cam_name, scale):
+    """``compute`` function returning CAM field ``cam_name`` times ``scale``."""
+    return lambda ds: ds[cam_name] * scale
+
+
+def _definition(cam_name, scale):
+    return cam_name if scale == 1.0 else f"{cam_name} * {scale:g}"
+
+
 VARIABLES = {
-    "tas": {
-        "source_variable": "TREFHT",
-        "scale": 1.0,
-        "units": "K",
-        "long_name": "Near-Surface Air Temperature",
-    },
-    "prc": {
-        "source_variable": "PRECC",
-        "scale": WATER_DENSITY,
-        "units": "kg m-2 s-1",
-        "long_name": "Convective Precipitation",
-        "precip_kind": "convective",
-    },
-    "pr": {
-        "source_variable": "PRECT",
-        "scale": WATER_DENSITY,
-        "units": "kg m-2 s-1",
-        "long_name": "Precipitation",
-        "precip_kind": "total",
-    },
+    **{name: {"definition": _definition(cam, scale), "compute": _scaled_field(cam, scale),
+              "units": units, "long_name": long_name}
+       for name, cam, scale, units, long_name in _CMIP_RENAMED_FIELDS},
+    **{cam: {"definition": _definition(cam, scale), "compute": _scaled_field(cam, scale),
+             "units": units, "long_name": long_name}
+       for cam, scale, units, long_name in _CAM_FIELDS},
+    **{name: {"definition": definition, "compute": compute,
+              "units": units, "long_name": long_name}
+       for name, definition, compute, units, long_name in _DERIVED_FIELDS},
 }
 
 # One input file per simulation, in case-grid order (see ``CASE_GRID``), with
@@ -108,18 +183,28 @@ CO2_LEVELS = [1, 2, 4]
 HOSING_LEVELS = [-0.3, 0.0, 0.3]
 CASE_GRID = [[case_name(co2, hos) for hos in HOSING_LEVELS] for co2 in CO2_LEVELS]
 
-# Each entry produces exactly one processed file: annual_file(var, experiment).
-INPUT_MANIFEST = [
-    {"var": var, "experiment": experiment}
-    for experiment in EXPERIMENTS
-    for var in VARIABLES
-]
 
+def case_grid_time_mean(var, first_year, last_year):
+    """Time mean of ``var`` over calendar years ``first_year``..``last_year``
+    (inclusive) for every case, as a ``(co2, hosing, lat, lon)`` DataArray laid
+    out like ``CASE_GRID`` (``co2`` = CO2 multiple, ``hosing`` = hosing in Sv).
 
-def annual_file(var, experiment):
-    """Processed gridded annual-mean file name for ``var`` in ``experiment``."""
-    return f"{var}_annual_{SOURCE_ID}_{experiment}.nc"
-
+    Every case must cover the full year range (``sel`` raises otherwise).
+    """
+    years = np.arange(first_year, last_year + 1)
+    rows = [
+        xr.concat(
+            [load_annual_field(case, var).sel(year=years).mean("year") for case in row],
+            dim=pd.Index(HOSING_LEVELS, name="hosing"),
+        )
+        for row in CASE_GRID
+    ]
+    grid = xr.concat(rows, dim=pd.Index(CO2_LEVELS, name="co2"))
+    spec = VARIABLES[var]
+    grid.attrs = {"units": spec["units"], "long_name": spec["long_name"],
+                  "definition": spec["definition"],
+                  "time_mean": f"{first_year}-{last_year}"}
+    return grid.rename(var)
 
 def scalar_file(experiment):
     """Processed per-simulation scalar time-series file name."""
@@ -151,23 +236,16 @@ def open_experiment(experiment):
 
 def load_annual_field(experiment, var):
     """Annual-mean ``(year, lat, lon)`` field ``var`` (a ``VARIABLES`` key) for
-    ``experiment``, converted to CMIP units, with provenance attributes."""
+    ``experiment``, in the analysis units, with provenance attributes."""
     spec = VARIABLES[var]
-    source = open_experiment(experiment)[spec["source_variable"]]
-    field = (source * spec["scale"]).rename(var)
+    field = spec["compute"](open_experiment(experiment)).rename(var)
     field.attrs = {
-        **{k: v for k, v in spec.items() if k not in ("source_variable", "scale")},
+        "units": spec["units"],
+        "long_name": spec["long_name"],
+        "definition": spec["definition"],
         "source_file": EXPERIMENTS[experiment]["file"],
-        "source_variable": spec["source_variable"],
-        "original_units": source.attrs["units"],
-        "conversion_factor": spec["scale"],
     }
     return field
-
-
-def load_and_normalize(entry):
-    """Build the annual-mean DataArray for one ``INPUT_MANIFEST`` entry."""
-    return load_annual_field(entry["experiment"], entry["var"])
 
 
 def block_average_on_years(obj, block):
@@ -289,17 +367,3 @@ def amoc_strength_on_years(experiment, years):
         series.values, coords={"year": np.asarray(years)}, dims="year",
         name="amoc_strength",
     )
-
-
-# One scalar file per simulation, on the run's gridded year axis. Every run has
-# gridded tas and precipitation; ``precip_var`` selects the precipitation source
-# for the ITCZ centroid diagnostic (``precip_centroid_lat_*``).
-SCALAR_SIMULATIONS = [
-    {
-        "experiment": experiment,
-        "tas_file": annual_file("tas", experiment),
-        "precip_file": annual_file("prc", experiment),
-        "precip_var": "prc",
-    }
-    for experiment in EXPERIMENTS
-]
