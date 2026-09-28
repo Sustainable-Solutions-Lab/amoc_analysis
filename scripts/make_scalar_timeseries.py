@@ -95,7 +95,8 @@ def main():
             "units": "Sv",
             "long_name": "AMOC strength",
             "source_file": dl.AMOC_FILE,
-            "source_variable": experiment,
+            "source_variable": dl.EXPERIMENTS[experiment]["amoc_column"],
+            "note": "26.5N annual-mean AMOC, 2051-2150; NaN outside that range.",
         }
         data_vars["amoc_strength"] = amoc
 

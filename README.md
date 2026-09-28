@@ -55,7 +55,7 @@ Model output lives in `./data/input/` (NetCDF). Treat this directory as read-onl
 reference data (see `CLAUDE.md`). The files are too large for git and are not
 tracked, so **a colleague has to obtain them separately** and put them in
 `data/input/` under the exact names below. The names are hard-coded in
-`src/data_loader.py` (`EXPERIMENTS`, `AMOC_FILE`).
+`src/data_loader.py` (`INPUT_FILES`, `AMOC_FILE`).
 
 > **Model version.** These runs come from **CESM1**, not CESM2. The evidence: the
 > `B1850CN` compset, the `f19g16` grid, a 26-level CAM initial file
@@ -104,7 +104,7 @@ There is one file per simulation, named `<CESM case>_annual_mean.nc`
 (Suffix `C` = clear-sky. `S` = surface and `T` = top of model. `N` = net,
 `D` = downwelling and `U` = upwelling.)
 
-**AMOC is not in these files.** It comes from a separate file (see
+**AMOC is not in these files.** It comes from separate CSV files (see
 [below](#amoc-strength-time-series)).
 
 ### Available simulations
@@ -186,15 +186,44 @@ Loader entry points:
 
 ### AMOC strength time series
 
-**Required, not yet supplied:** `data/input/AMOC_CESM1_B1850CN_f19g16.nc`
-(`data_loader.AMOC_FILE`). The loader expects **one variable per case name**
-from the table above (`1xCO2`, `2xCO2_p03Sv`, …), each a 1-D series in **Sv** on
-an integer calendar `year` coordinate that uses the same labels as the gridded
-files. `amoc_strength_on_years` aligns each series by year. Years the file does
-not cover become NaN and are dropped from regressions (complete-case deletion,
-see `CLAUDE.md`). If the delivered file's layout differs, adapt the loader to it.
-`scripts/make_scalar_timeseries.py` fails with `FileNotFoundError` until the file
-exists.
+Two CSV files in `data/input/` hold AMOC strength (Sv) at **26.5°N**, the
+latitude of the RAPID array. They have one column per run, labeled as below.
+The mapping from column label to case name is `INPUT_FILES[...]["amoc_column"]`
+in `src/data_loader.py`.
+
+- **`amoc_timeseries_26p5N_9experiments_v5_annual.csv`** (`data_loader.AMOC_FILE`)
+  contains the annual-mean series used in the analysis. It has a `year` column
+  (2051–2150, 100 years, no gaps) and one column per run, with no missing values.
+- **`amoc_timeseries_26p5N_9experiments_v5_summary.csv`** is a reference file
+  with one row per run: the CESM case name (`experiment`), `label`, `mean_Sv`,
+  `std_Sv` (population, ddof = 0), `yr1_Sv`, `yr100_Sv` and
+  `trend_Sv_per_century` (OLS). The code does not read it. The annual file
+  reproduces all of its values, the year-100 values to within 0.001 Sv.
+
+| Case name | CSV column label | mean ± std (Sv) | year 1 → year 100 (Sv) | trend (Sv/century) |
+| --- | --- | --- | --- | --- |
+| `1xCO2_m03Sv` | `1x CO2, -0.3 Sv` | 25.8 ± 1.8 | 21.6 → 25.3 | +3.4 |
+| `1xCO2` | `piControl` | 19.8 ± 0.7 | 21.6 → 20.3 | −0.1 |
+| `1xCO2_p03Sv` | `1x CO2, +0.3 Sv` | 9.0 ± 4.5 | 21.8 → 5.2 | −13.8 |
+| `2xCO2_m03Sv` | `2x CO2, -0.3 Sv` | 23.1 ± 1.0 | 22.2 → 23.3 | +1.9 |
+| `2xCO2` | `2x CO2, no hosing` | 15.9 ± 1.7 | 22.6 → 14.7 | −4.6 |
+| `2xCO2_p03Sv` | `2x CO2, +0.3 Sv` | 9.2 ± 5.1 | 22.5 → 5.1 | −13.5 |
+| `4xCO2_m03Sv` | `4x CO2, -0.3 Sv` | 20.1 ± 0.7 | 22.4 → 20.1 | +0.9 |
+| `4xCO2` | `4x CO2, no hosing` | 11.8 ± 2.9 | 22.3 → 10.3 | −7.7 |
+| `4xCO2_p03Sv` | `4x CO2, +0.3 Sv` | 8.1 ± 4.1 | 21.9 → 5.9 | −10.8 |
+
+**How AMOC years line up with the gridded years.** The AMOC years use the same
+labels as the gridded files, and `amoc_strength_on_years` aligns the two by year.
+AMOC covers the first 100 years of every perturbation run. The runs lasting 105
+years get NaN AMOC for 2151–2155. The control's AMOC covers only 2051–2150 of its
+1850–2150 gridded record. Regressions use complete-case deletion (see
+`CLAUDE.md`), so every run contributes **100 years (900 pooled; 90 decadal
+blocks)**. The best evidence that the control's AMOC years are the same years as
+its gridded years is year 1: the control's 2051 value (21.63 Sv) almost equals
+the first-year values of the 1×CO₂ hosing runs (21.64 and 21.75 Sv). That is
+expected if 2051 is where they branched from the control. Correlating the
+control's AMOC with North Atlantic temperature gives no clear answer, because
+the control's AMOC variability is small.
 
 ### Processed annual fields (`data/processed/`, git-ignored)
 
@@ -227,9 +256,9 @@ handle the FV grid's half-width polar cells at ±90°.
 > **Note:** the method descriptions below still apply, but the run names, sample
 > sizes, fitted values and scenario numbers were written for the **earlier CESM2
 > dataset** (historical-ssp585, abrupt-4xCO2, piControl, u03-hos). They will be
-> updated once the analyses are re-run on the CESM1 runs above, which requires the
-> AMOC file. The monthly path (`make_monthly_means.py` and its dependents) needs
-> monthly input and cannot run on the annual-only CESM1 files.
+> updated once the analyses are re-run on the CESM1 runs above. The monthly path
+> (`make_monthly_means.py` and its dependents) needs monthly input and cannot run
+> on the annual-only CESM1 files.
 
 ### Pooled per-grid-point regressions
 
@@ -479,7 +508,7 @@ dependencies, run, in order:
 
 ```bash
 python scripts/make_annual_means.py        # data/processed/{tas,prc,pr}_annual_CESM1_*.nc
-python scripts/make_scalar_timeseries.py   # data/processed/scalars_annual_CESM1_*.nc (needs the AMOC file)
+python scripts/make_scalar_timeseries.py   # data/processed/scalars_annual_CESM1_*.nc
 python scripts/run_regressions.py          # data/output/regression/{tas,prc,pr}/[decadal10/]coef_set*.{pdf,nc}
 python scripts/plot_predictor_scatter.py   # data/output/regression/predictor_scatter.pdf
 python scripts/plot_scalar_timeseries.py   # data/output/regression/predictor_timeseries.pdf

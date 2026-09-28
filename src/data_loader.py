@@ -22,13 +22,14 @@ PRECT matches the global mean QFLX evaporation, ~2.86 mm/day), so it is multipli
 by the density of water, 1000 kg m-3, to give kg m-2 s-1. Provenance attributes
 record the source file, variable, and conversion.
 
-AMOC strength is not in the gridded files; it is read from the separate
+AMOC strength is not in the gridded files; it is read from the separate CSV
 ``AMOC_FILE`` (see ``amoc_strength_on_years``).
 """
 
 import os
 
 import numpy as np
+import pandas as pd
 import xarray as xr
 
 SOURCE_ID = "CESM1"
@@ -67,7 +68,8 @@ VARIABLES = {
     },
 }
 
-# One input file per simulation, in case-grid order (see ``CASE_GRID``).
+# One input file per simulation, in case-grid order (see ``CASE_GRID``), with
+# the run's column label in ``AMOC_FILE``.
 # ``co2_multiple`` is the CO2 concentration relative to preindustrial and
 # ``hosing_sv`` the North Atlantic freshwater forcing (Sv; negative = freshwater
 # removal), both read from the CESM case names in the file names. Year ranges are
@@ -75,15 +77,15 @@ VARIABLES = {
 # other run starts in 2051 (control year 201, cf. the ``yr200`` in the no-hosing
 # file names).
 INPUT_FILES = [
-    {"file": "B1850CN_neghos0p3Sv_f19g16_NAHosMIP_v5_annual_mean.nc", "co2_multiple": 1, "hosing_sv": -0.3},
-    {"file": "B1850CN_f19g16_GCC_piCtrl300yr_annual_mean.nc", "co2_multiple": 1, "hosing_sv": 0.0},
-    {"file": "B1850CN_hos0p3Sv_f19g16_NAHosMIP_v5_annual_mean.nc", "co2_multiple": 1, "hosing_sv": 0.3},
-    {"file": "B1850CN_2xCO2_neghos0p3Sv_f19g16_NAHosMIP_v5_annual_mean.nc", "co2_multiple": 2, "hosing_sv": -0.3},
-    {"file": "B1850CN_2xCO2_noh_f19g16_yr200_annual_mean.nc", "co2_multiple": 2, "hosing_sv": 0.0},
-    {"file": "B1850CN_2xCO2_hos0p3Sv_f19g16_NAHosMIP_v5_annual_mean.nc", "co2_multiple": 2, "hosing_sv": 0.3},
-    {"file": "B1850CN_4xCO2_neghos0p3Sv_f19g16_NAHosMIP_v5_annual_mean.nc", "co2_multiple": 4, "hosing_sv": -0.3},
-    {"file": "B1850CN_4xCO2_noh_f19g16_yr200_annual_mean.nc", "co2_multiple": 4, "hosing_sv": 0.0},
-    {"file": "B1850CN_4xCO2_hos0p3Sv_f19g16_NAHosMIP_v5_annual_mean.nc", "co2_multiple": 4, "hosing_sv": 0.3},
+    {"file": "B1850CN_neghos0p3Sv_f19g16_NAHosMIP_v5_annual_mean.nc", "amoc_column": "1x CO2, -0.3 Sv", "co2_multiple": 1, "hosing_sv": -0.3},
+    {"file": "B1850CN_f19g16_GCC_piCtrl300yr_annual_mean.nc", "amoc_column": "piControl", "co2_multiple": 1, "hosing_sv": 0.0},
+    {"file": "B1850CN_hos0p3Sv_f19g16_NAHosMIP_v5_annual_mean.nc", "amoc_column": "1x CO2, +0.3 Sv", "co2_multiple": 1, "hosing_sv": 0.3},
+    {"file": "B1850CN_2xCO2_neghos0p3Sv_f19g16_NAHosMIP_v5_annual_mean.nc", "amoc_column": "2x CO2, -0.3 Sv", "co2_multiple": 2, "hosing_sv": -0.3},
+    {"file": "B1850CN_2xCO2_noh_f19g16_yr200_annual_mean.nc", "amoc_column": "2x CO2, no hosing", "co2_multiple": 2, "hosing_sv": 0.0},
+    {"file": "B1850CN_2xCO2_hos0p3Sv_f19g16_NAHosMIP_v5_annual_mean.nc", "amoc_column": "2x CO2, +0.3 Sv", "co2_multiple": 2, "hosing_sv": 0.3},
+    {"file": "B1850CN_4xCO2_neghos0p3Sv_f19g16_NAHosMIP_v5_annual_mean.nc", "amoc_column": "4x CO2, -0.3 Sv", "co2_multiple": 4, "hosing_sv": -0.3},
+    {"file": "B1850CN_4xCO2_noh_f19g16_yr200_annual_mean.nc", "amoc_column": "4x CO2, no hosing", "co2_multiple": 4, "hosing_sv": 0.0},
+    {"file": "B1850CN_4xCO2_hos0p3Sv_f19g16_NAHosMIP_v5_annual_mean.nc", "amoc_column": "4x CO2, +0.3 Sv", "co2_multiple": 4, "hosing_sv": 0.3},
 ]
 
 # Case-name suffix for each hosing level: m = -0.3 Sv, none = 0 Sv, p = +0.3 Sv.
@@ -211,10 +213,11 @@ def block_average_on_years(obj, block):
 
 # --- Scalar (one-value-per-year) diagnostics -------------------------------
 
-# Precomputed AMOC strength for these runs, supplied separately from the gridded
-# files. Expected layout: one variable per case name (``EXPERIMENTS`` key), each on an integer
-# calendar ``year`` coordinate matching the gridded files' year labels, in Sv.
-AMOC_FILE = "AMOC_CESM1_B1850CN_f19g16.nc"
+# Annual-mean AMOC strength (Sv) at 26.5 N: a ``year`` column (2051-2150) plus one
+# column per run, labeled as in ``INPUT_FILES[...]["amoc_column"]``. Its years use
+# the same labels as the gridded files (the control's first AMOC value equals the
+# hosing runs' first-year values, i.e. 2051 is the branch year in both).
+AMOC_FILE = "amoc_timeseries_26p5N_9experiments_v5_annual.csv"
 
 
 def latitude_band_weights(lat):
@@ -276,12 +279,16 @@ def tropical_precip_centroid_lat(da, band):
 def amoc_strength_on_years(experiment, years):
     """AMOC strength (Sv) for ``experiment`` placed onto ``years``.
 
-    Reads the ``experiment`` variable of ``AMOC_FILE`` and aligns it by calendar
-    year; years the AMOC series does not cover are left missing (NaN), so the
-    regressions drop them by complete-case deletion.
+    Reads the run's column of ``AMOC_FILE`` and aligns it by calendar year; years
+    the AMOC series does not cover are left missing (NaN), so the regressions drop
+    them by complete-case deletion.
     """
-    amoc = xr.open_dataset(os.path.join(INPUT_DIR, AMOC_FILE))[experiment]
-    return amoc.reindex(year=np.asarray(years)).rename("amoc_strength")
+    table = pd.read_csv(os.path.join(INPUT_DIR, AMOC_FILE), index_col="year")
+    series = table[EXPERIMENTS[experiment]["amoc_column"]].reindex(np.asarray(years))
+    return xr.DataArray(
+        series.values, coords={"year": np.asarray(years)}, dims="year",
+        name="amoc_strength",
+    )
 
 
 # One scalar file per simulation, on the run's gridded year axis. Every run has
