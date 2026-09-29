@@ -163,19 +163,18 @@ all nine runs, and each is a regression predictand. Every variable has a
 `definition` (a formula in CAM field names), `units` and a `long_name`, and each
 loaded field records these, plus its source file, as attributes.
 
-- **CMIP names (3):** `tas` = `TREFHT` (K); `prc` = `PRECC` × 1000 (convective
-  precipitation); `pr` = `PRECT` × 1000 (total precipitation, `PRECC` +
-  `PRECL`).
+- **CMIP names (3):** `tas` = `TREFHT` (K); `prc` = `PRECC` (convective
+  precipitation); `pr` = `PRECT` (total precipitation, `PRECC` + `PRECL`), both in
+  mm day⁻¹.
 - **CAM names (36):** every other field in the files keeps its CAM name (table
-  above). Precipitation rates (`PRECL`, `PRECSH`, `PRECSC`, `PRECSL`) are
-  multiplied by 1000 kg m⁻³, like `pr` and `prc`. All other fields keep their
-  native units.
+  above). Water fluxes (`PRECL`, `PRECSH`, `PRECSC`, `PRECSL`, `QFLX`) are converted
+  to mm day⁻¹, like `pr` and `prc`. All other fields keep their native units.
 - **Derived (7):**
 
 | Variable | Definition | Units | Meaning |
 | --- | --- | --- | --- |
-| `pr_minus_evap` | `PRECT` × 1000 − `QFLX` | kg m⁻² s⁻¹ | precipitation minus evaporation (P − E) |
-| `prsn` | (`PRECSC` + `PRECSL`) × 1000 | kg m⁻² s⁻¹ | snowfall (water equivalent) |
+| `pr_minus_evap` | `PRECT` × 8.64e7 − `QFLX` × 86400 | mm day⁻¹ | precipitation minus evaporation (P − E) |
+| `prsn` | (`PRECSC` + `PRECSL`) × 8.64e7 | mm day⁻¹ | snowfall (water equivalent) |
 | `toa_net_down` | `FSNT` − `FLNT` | W m⁻² | net downward radiation at top of model |
 | `sfc_net_energy_down` | `FSNS` − `FLNS` − `LHFLX` − `SHFLX` | W m⁻² | net downward surface energy flux (radiative + turbulent) |
 | `cloud_radiative_effect` | `SWCF` + `LWCF` | W m⁻² | net cloud radiative effect at top of model |
@@ -185,11 +184,13 @@ loaded field records these, plus its source file, as attributes.
 As checks, the control's global means are P − E ≈ 0 (−0.0006 mm day⁻¹), a top-of-model
 imbalance of −0.3 W m⁻² and a surface energy flux of +0.4 W m⁻².
 
-CAM precipitation is a liquid-water-equivalent rate, and in these files the
-`m/s` label is correct. The global-mean `PRECT` (2.86 mm day⁻¹) equals the
-global-mean evaporation `QFLX`, so multiplying by the density of water gives the
-CMIP mass flux. (The old CESM2 CAM files were different: their precipitation was
-labeled `m/s` but already held kg m⁻² s⁻¹.)
+**Water-flux units.** All water fluxes (precipitation, snowfall, evaporation,
+P − E) are in **mm day⁻¹** of liquid water (`data_loader.WATER_FLUX_UNITS`). CAM
+precipitation is a liquid-water-equivalent rate, and in these files the `m/s` label
+is correct: m s⁻¹ × 1000 mm m⁻¹ × 86400 s day⁻¹ = × 8.64e7. `QFLX` is a mass flux in
+kg m⁻² s⁻¹, and 1 kg m⁻² of water is a 1 mm layer, so it needs only × 86400. As a
+check, the control's global-mean `pr` (2.877 mm day⁻¹) equals its global-mean
+`QFLX`.
 
 **Corrected source-attribute errors:**
 
@@ -295,7 +296,7 @@ handle the FV grid's half-width polar cells at ±90°.
 > **Status of this section (CESM1 data).** The pooled per-grid-point regressions
 > (`run_regressions.py`, default sets 5 & 10, decadal10) have been **re-run on the
 > nine CESM1 runs**, and the two subsections below describe those results. The
-> EOF, scenario-prediction and ITCZ subsections further down have **not** been
+> EOF and ITCZ subsections further down have **not** been
 > re-run yet. Their run names, sample sizes and numbers still refer to the
 > earlier CESM2 dataset (historical-ssp585, abrupt-4xCO2, piControl, u03-hos). The
 > CESM2 regression outputs were moved to `data/output/old_cesm2/regression/`.
@@ -348,10 +349,19 @@ of the regression scripts to produce all ten:
   AMOC = 15.86 Sv, stored as `centering_mean_*` attributes in the NetCDF. The
   interaction coefficient is the same as in the uncentered form.
 
-Coefficient maps (`src/output.py`) use the Equal Earth projection and a diverging
+Coefficient maps (`src/output.py`) use the Equal Earth projection (longitudes
+relabeled to −180…180 via `output.centered_lon`, so the grid's wrap point falls on
+the map edge, not at 0°) and a diverging
 colormap with symmetric bounds (white = 0). Water-related fields use `RdBu`, so
 wetter or moister is blue (`regression.WET_IS_BLUE`). All other fields use
 `RdBu_r`, so positive is red. The maps **stipple cells where p > 0.05**.
+
+**Case styling.** Every figure that distinguishes cases uses one convention. Hosing
+sets the color: −0.3, 0, +0.3 Sv = red, black, blue. CO₂ sets the line style (1×,
+2×, 4× = solid, dashed, dotted; `output.case_line_style`) or, in scatter plots, the
+filled marker (circle, triangle, square; `output.case_marker_style`). Multi-page
+PDFs are written with `output.PdfBook`, one page at a time, which keeps memory flat
+(matplotlib's `PdfPages` holds every page until it is closed).
 
 **Outputs.**
 
@@ -361,9 +371,10 @@ wetter or moister is blue (`regression.WET_IS_BLUE`). All other fields use
   `--do-annuals`) go directly in `data/output/regression/`.
 - The coefficient/SE/t/p/R² fields stay as one NetCDF per predictand and set in
   `data/output/regression/<predictand>/[decadal10/]`, with a caveats
-  `README.txt`. `scripts/plot_predictor_scatter.py` and
-`scripts/plot_scalar_timeseries.py` (predictor scatter and time-series plots in
-`data/output/regression/`) have not yet been re-run on CESM1.
+  `README.txt`.
+- `scripts/plot_predictor_scatter.py`, `scripts/plot_scalar_timeseries.py` and
+  `scripts/plot_tglob_vs_amoc.py` write the predictor scatter, time-series and
+  AMOC-vs-Tglob plots to `data/output/regression/`.
 
 **Collinearity.** The design is well conditioned for the default sets: VIF =
 1.0002 for set 5 (Tglob, AMOC) and ≤ 1.19 for set 10. The three-index union is
@@ -384,7 +395,7 @@ In the table, "global" is the area-weighted global mean of the coefficient map.
 "Typical SE" is the area mean of the per-cell standard error. "p < 0.05" is the
 fraction of global area where the coefficient is significant (nominal). Regions
 are area-weighted boxes: subpolar North Atlantic = 45–65°N, 60–10°W; Sahel =
-10–20°N, 20°W–40°E. Precipitation coefficients are converted to mm day⁻¹ (× 86400).
+10–20°N, 20°W–40°E. Precipitation is in mm day⁻¹ throughout.
 
 **Set 5: predictand ~ Tglob + AMOC**
 
@@ -520,51 +531,35 @@ wanted deliverables. The capability remains in `eof.reconstruct_fingerprint`
 (verified: with all modes retained it reproduces the direct field regression's
 coefficient *and* p-value to Δcoef ~ 1e-10, Δp ~ 1e-8) should maps be wanted later.
 
-### Scenario prediction: where AMOC slowdown exacerbates vs. ameliorates CO₂ change
-
-> **Not yet re-run on CESM1.** The run names and numbers in this subsection refer to the earlier CESM2 dataset.
+### Scenario prediction: 3 K warming with and without AMOC decline
 
 `scripts/predict_scenarios.py` uses the **decadal** set 5 (Tglob + AMOC) and set 10
-(Tglob + AMOC + Tglob·AMOC) coefficient maps to predict end-of-century field changes
-and isolate the AMOC-slowdown contribution. It addresses: *where does AMOC slowdown
-exacerbate CO₂-induced changes in surface temperature and precipitation, and where
-does it ameliorate them?*
-
-The high-CO₂ world **with** AMOC slowdown (SSP585, 2091–2100) is compared against two
-counterfactuals **without** slowdown (AMOC restored to the control value), which
-bracket the unknown global-mean-temperature effect of the slowdown:
+(Tglob + AMOC + Tglob·AMOC) coefficient maps to predict field changes for 3 K of
+global warming relative to the 1×CO₂ control, with and without an AMOC decline from
+20 to 6 Sv. It addresses: *where does AMOC decline exacerbate the response to warming,
+and where does it ameliorate it?*
 
 | condition | Tglob (K) | AMOC (Sv) | meaning |
 | --- | --- | --- | --- |
-| piControl | 287.207 | 17.44 | preindustrial baseline (years 700–799) |
-| SSP585 | 293.090 | 7.34 | end-of-century, with slowdown |
-| SSP585-adj1 | 294.665 | 17.44 | assm. 1: slowdown cooled by 0.1558 K/Sv × 10.10 Sv ≈ 1.575 K, added back |
-| SSP585-adj2 | 293.090 | 17.44 | assm. 2: slowdown had no global-mean-T effect; only AMOC restored |
+| baseline | T0 = 286.91 | 20 | 1×CO₂ control (mean over its AMOC-present years, 2051–2150) |
+| warm | T0 + 3 | 20 | warming, AMOC unchanged |
+| warm-weak | T0 + 3 | 6 | warming, AMOC 20 → 6 Sv |
 
-The 0.1558 ± 0.0042 K/Sv slope is the OLS of global-mean tas on AMOC in the u03-hos
-hosing run (a within-experiment correlation, not a transferable causal sensitivity).
-For the **`pr`** predictand (no piControl run), the baseline is instead the
-historical-ssp585 **1850–1900 mean** (≈287.18 K / 17.84 Sv — essentially the piControl
-state). The set-10 centering means are read per predictand from the coef file's
-`centering_mean_*` attributes, so the 2-run `pr` fit uses its own centering.
+Global-mean warming is the same 3 K in both warm states, so **warm-weak − warm** is
+the AMOC-decline effect at fixed global-mean temperature (pure spatial redistribution
+for tas; the global means of prc/pr can still shift). Both warm states lie inside the
+sampled predictor space (near `4xCO2_m03Sv` and `4xCO2_p03Sv`), so the predictions
+are interpolations.
 
 The predicted change between two conditions is `coef · (predictor(X) − predictor(R))`
 (the intercept cancels; set 10 evaluates its centered columns and interaction with the
-fit's centering means). Each predictand is a **three-page** PDF
+fit's centering means). Each predictand is a **two-page** PDF
 (`data/output/scenarios/predicted_change_{tas,prc,pr}.pdf`), rows = set 5 and set 10:
-page 1 (2×3) is the change relative to piControl — **SSP585 − piControl**,
-**adj1 − piControl**, **adj2 − piControl**; page 2 (2×2) is the AMOC-slowdown effect —
-**SSP585 − adj1**, **SSP585 − adj2**; page 3 (2×2) expresses that effect as the
-**fractional increase(+)/decrease(−) in the response caused by the slowdown**, i.e.
-`(SSP585 − adjN) / (adjN − piControl) × 100` — the AMOC effect divided by the
-*no-slowdown CO₂-only* change. Under adj2 global-mean tas is held fixed, so
-`SSP585 − adj2` is pure spatial redistribution (global mean exactly 0). Comparing the
-sign of the AMOC effect (page 2) against the CO₂-only change (`adjN − piControl`, page 1)
-shows where the slowdown adds to (exacerbates) or opposes (ameliorates) the CO₂ response
-— e.g. for tas the subpolar North Atlantic cold blob, for prc an ITCZ-shift dipole.
-On page 3 the ratio explodes where the denominator crosses zero, so every page-3 panel
-uses a common fixed **±100 %** color scale (values beyond saturate) to keep panels
-directly comparable.
+page 1 (2×3) shows **warm − baseline**, **warm-weak − baseline**, and the AMOC effect
+**warm-weak − warm**; page 2 expresses the AMOC effect as a percentage of the
+warming-only change, `(warm-weak − warm) / (warm − baseline) × 100`, on a fixed
+**±100 %** color scale (the ratio explodes where the denominator crosses zero). The
+script prints the area-weighted global mean of every mapped change.
 
 ### ITCZ-position regressions (scalar response)
 

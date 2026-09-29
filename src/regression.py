@@ -344,7 +344,7 @@ def fit_grid_ols(predictors, tas):
     ``nobs``. ``param`` is ``["intercept", *predictor names]``.
 
     The response is cast to float64: the CAM fields are float32, and squaring
-    near-zero values (e.g. ~1e-27 kg m-2 s-1 of snowfall) underflows in float32,
+    near-zero values (e.g. trace snowfall in the tropics) underflows in float32,
     which would zero the total sum of squares while the float64 residuals do not.
     """
     names = list(predictors.data_vars)

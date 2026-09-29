@@ -5,7 +5,7 @@ precip-weighted mean latitude of the zonal-mean precipitation in a tropical band
 an ITCZ-position index that varies continuously through double-ITCZ states),
 computed for two bands -- ``precip_centroid_lat_20`` (20S-20N) and
 ``precip_centroid_lat_30`` (30S-30N) -- read from the per-simulation
-``scalars_annual_CESM2_{run}.nc`` files. Each is a single value per
+``scalars_annual_CESM1_{run}.nc`` files. Each is a single value per
 simulation-year. The predictors are the same scalar indices used elsewhere
 (Tglob, dT_NS, AMOC) and the same predictor sets and smoothing variants. By default
 only sets 5 & 10 are run (pass ``--all-sets`` for all ten) and only the decadal10
@@ -43,8 +43,7 @@ CAVEATS = """ITCZ regressions: pooled OLS of a scalar ITCZ-latitude response.
   = area- and precip-weighted mean latitude of the zonal-mean precipitation within
   the tropical band {band}. It integrates over both branches of a double ITCZ, so
   it varies continuously (unlike the bare argmax, which jumps between branches).
-- The years of all four simulations (historical-ssp585, abrupt-4xCO2, piControl,
-  u03-hos) are POOLED into a single fit with a common intercept and no per-run
+- The years of all nine simulations (the 3x3 CO2 x hosing matrix) are POOLED into a single fit with a common intercept and no per-run
   fixed effects, on years where all predictors (Tglob, dT_NS, AMOC) AND the
   response are present.
 - Smoothing: 'decadal10' (slow timescales, decadal10/ subdir) = non-overlapping
@@ -56,9 +55,7 @@ CAVEATS = """ITCZ regressions: pooled OLS of a scalar ITCZ-latitude response.
   decadal samples with far more trustworthy degrees of freedom (at lower n).
 - Coefficient units are deg latitude per predictor unit (Tglob, dT_NS in K;
   AMOC in Sv).
-- The precip-centroid source is CONVECTIVE prc uniformly for all runs. For
-  historical-ssp585 the r1->r4 member splice (historical r1i1p1f1, ssp585 r4i1p1f1)
-  is identical for prc, tas, and AMOC, so predictand and predictors stay consistent.
+- The precip-centroid source is CONVECTIVE prc uniformly for all runs.
 """
 
 

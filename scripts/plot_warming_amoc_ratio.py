@@ -39,7 +39,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import data_loader as dl
 import regression as reg
-from output import DATA_CRS, PROJECTION, draw_coastlines, plot_coefficient_map
+from output import DATA_CRS, PROJECTION, centered_lon, draw_coastlines, plot_coefficient_map
 
 import matplotlib.pyplot as plt
 
@@ -87,6 +87,7 @@ def plot(a, a_p, b, b_p, ratio, predictand, out_pdf):
     # realistic slowdown-per-K is on scale and AMOC-insensitive cells saturate.
     bound = RATIO_BOUND
     ax = axes[2]
+    ratio = centered_lon(ratio)
     mesh = ax.pcolormesh(
         ratio["lon"], ratio["lat"], ratio, cmap=RATIO_CMAP,
         vmin=-bound, vmax=bound, shading="auto", transform=DATA_CRS,

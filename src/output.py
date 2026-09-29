@@ -10,6 +10,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import functools
+import io
 
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
@@ -18,12 +19,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import shapely
 from matplotlib.lines import Line2D
+from pypdf import PdfReader, PdfWriter
 from scipy import stats
 
 import data_loader as dl
-
-MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 SIGNIFICANCE_P = 0.05
 PROJECTION = ccrs.EqualEarth()  # default for all maps (UN guidance)
@@ -52,6 +51,17 @@ def draw_coastlines(ax):
     ax.add_geometries(coarse_coastline(), crs=DATA_CRS, facecolor="none",
                       edgecolor="black", linewidth=0.5)
 
+
+def centered_lon(da):
+    """``da`` with longitude relabeled to [-180, 180) and sorted, for mapping.
+
+    The CAM grid runs 0..357.5 E, so drawn as is its wrap point lands on the
+    central meridian of the Greenwich-centered map projection, where Cartopy's
+    pcolormesh leaves a thin unfilled stripe at 0 deg. Relabeled, the wrap point
+    moves to +/-180 deg, the map's outer edge.
+    """
+    return da.assign_coords(lon=(da["lon"] + 180) % 360 - 180).sortby("lon")
+
 # Line-plot convention for cases: CO2 level sets the line style (1x solid,
 # 2x dashed, 4x dotted) and hosing sets the color (-0.3 Sv red, 0 black,
 # +0.3 Sv blue).
@@ -64,6 +74,19 @@ def case_line_style(case):
     spec = dl.EXPERIMENTS[case]
     return {"color": HOSING_COLOR[spec["hosing_sv"]],
             "linestyle": CO2_LINESTYLE[spec["co2_multiple"]]}
+
+
+# Scatter-marker convention: CO2 level sets the (filled) marker shape -- 1x circle,
+# 2x triangle, 4x square; hosing sets the color, as for lines. The triangle has the
+# least ink at a given size, so the least-emphasized 2xCO2 level draws least attention.
+CO2_MARKER = {1: "o", 2: "^", 4: "s"}
+
+
+def case_marker_style(case):
+    """``ax.scatter`` kwargs for a case's points: marker by CO2, color by hosing."""
+    spec = dl.EXPERIMENTS[case]
+    color = HOSING_COLOR[spec["hosing_sv"]]
+    return {"marker": CO2_MARKER[spec["co2_multiple"]], "color": color}
 
 # Axis labels for the scalar predictors (used by the scatter plot).
 SCALAR_AXIS_LABELS = {
@@ -78,10 +101,41 @@ def _symmetric_bound(values):
     return float(np.nanpercentile(np.abs(values), 99))
 
 
+class PdfBook:
+    """Multi-page PDF, written one standalone page at a time.
+
+    Drop-in for matplotlib's ``PdfPages`` (``savefig``, ``close``, context
+    manager). ``PdfPages`` keeps every page's images and path templates in memory
+    until ``close()`` -- ~0.3 GB per coefficient-map page here, so a 46-page book
+    reached ~13 GB. Each page is instead rendered to its own in-memory PDF, which
+    releases matplotlib's state, and the compressed pages are concatenated with
+    pypdf.
+    """
+
+    def __init__(self, path):
+        self.path = path
+        self._writer = PdfWriter()
+
+    def savefig(self, fig, **kwargs):
+        page = io.BytesIO()
+        fig.savefig(page, format="pdf", **kwargs)
+        self._writer.append(PdfReader(page))
+
+    def close(self):
+        with open(self.path, "wb") as f:
+            self._writer.write(f)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        self.close()
+
+
 def _save_figure(fig, out_path=None, pdf=None):
     """Write ``fig`` as a standalone PDF (``out_path``) or one page of ``pdf``.
 
-    ``pdf`` is a ``matplotlib.backends.backend_pdf.PdfPages`` handle; when given,
+    ``pdf`` is a ``PdfBook`` handle; when given,
     the figure is appended as a page (so many figures collect into one file).
     """
     if pdf is not None:
@@ -102,6 +156,7 @@ def plot_coefficient_map(coef, pvalue, title, units, ax, cmap="RdBu_r", bound=No
     ``rasterized`` the filled field (the heavy artist) is embedded as raster while
     axes/text stay vector -- keeps many-panel PDFs small. Returns the mappable.
     """
+    coef, pvalue = centered_lon(coef), centered_lon(pvalue)
     lon, lat = coef["lon"], coef["lat"]
     b = bound if bound is not None else _symmetric_bound(coef.values)
     mesh = ax.pcolormesh(
@@ -130,7 +185,7 @@ def plot_coefficient_map(coef, pvalue, title, units, ax, cmap="RdBu_r", bound=No
 
 def plot_set(fit, set_def, run_label, pdf, predictand, centering=None):
     """Render all predictor coefficient maps for one regression set as one page of
-    ``pdf`` (a ``PdfPages`` book, so several predictands collect into one file).
+    ``pdf`` (a ``PdfBook``, so several predictands collect into one file).
 
     One panel per predictor (the intercept is omitted). Stippling marks p > 0.05.
     ``predictand`` is a ``regression.PREDICTANDS`` entry (label + units), used for
@@ -202,7 +257,7 @@ def plot_eof_patterns(eof_ds, title, units, out_path, cmap="RdBu_r", max_pattern
     fig = plt.figure(figsize=(6.0 * ncols, 3.4 * nrows))
     for i in range(n_plot):
         ax = fig.add_subplot(nrows, ncols, i + 1, projection=PROJECTION)
-        e = eofs.isel(mode=i)
+        e = centered_lon(eofs.isel(mode=i))
         bound = _symmetric_bound(e.values)
         mesh = ax.pcolormesh(e["lon"], e["lat"], e, cmap=cmap, vmin=-bound,
                              vmax=bound, shading="auto", transform=DATA_CRS)
@@ -246,8 +301,8 @@ def plot_pc_timeseries(eof_ds, title, out_path, max_modes=4):
         order = np.argsort(years[m])
         yr = years[m][order].astype(float)
         # Break lines only across a genuine gap, scaled to the sampling interval
-        # (annual: spacing 1, decadal blocks: ~10), so the historical-ssp585 gap
-        # still breaks but regular decadal steps stay connected.
+        # (annual: spacing 1, decadal blocks: ~10), so a gap within a run still
+        # breaks but regular decadal steps stay connected.
         d = np.diff(yr)
         thresh = 1.5 * np.median(d) if d.size else np.inf
         gaps = np.where(d > thresh)[0] + 1
@@ -432,7 +487,8 @@ def plot_scalar_timeseries(annual, decadal, title, out_path):
 
 
 def plot_predictor_scatter(predictors, out_path):
-    """Four-panel scatter of the pooled predictors, points colored by simulation.
+    """Four-panel scatter of the pooled predictors, points styled by case
+    (``case_marker_style``).
 
     Top row uses global-mean tas on the x-axis (AMOC and ΔT_NS on y); bottom row
     uses AMOC strength on the x-axis (global-mean tas and ΔT_NS on y). The pooled
@@ -445,17 +501,16 @@ def plot_predictor_scatter(predictors, out_path):
         ("amoc_strength", "tas_global_mean"),
         ("amoc_strength", "tas_interhemispheric_diff"),
     ]
-    runs = list(dict.fromkeys(predictors["run"].values))
-    colors = plt.cm.tab10(np.arange(len(runs)))
+    runs = [case for case in dl.EXPERIMENTS if case in set(predictors["run"].values)]
     run_of = predictors["run"].values
 
     fig, axes = plt.subplots(2, 2, figsize=(11, 9))
     for ax, (xv, yv) in zip(axes.flat, panels):
         x, y = predictors[xv].values, predictors[yv].values
-        for color, run in zip(colors, runs):
+        for run in runs:
             m = run_of == run
-            ax.scatter(x[m], y[m], s=12, color=color, alpha=0.7,
-                       edgecolors="none", label=run)
+            ax.scatter(x[m], y[m], s=14, alpha=0.7, edgecolors="none", label=run,
+                       **case_marker_style(run))
         r = float(np.corrcoef(x, y)[0, 1])
         ax.set_xlabel(SCALAR_AXIS_LABELS[xv])
         ax.set_ylabel(SCALAR_AXIS_LABELS[yv])
@@ -463,7 +518,7 @@ def plot_predictor_scatter(predictors, out_path):
         ax.grid(alpha=0.3)
     axes.flat[0].legend(fontsize=8, markerscale=1.6, title="simulation")
     fig.suptitle(
-        "Pooled regression predictors (AMOC-complete sample, 4 simulations)",
+        f"Pooled regression predictors (AMOC-complete sample, {len(runs)} simulations)",
         fontsize=12,
     )
     fig.tight_layout(rect=(0, 0, 1, 0.97))
@@ -520,8 +575,7 @@ def plot_itcz_predicted_vs_observed(observed, run_of, panels, title, out_path):
     axes so departures from the 1:1 line read directly as prediction error.
     ``observed`` is the response array and ``run_of`` the per-sample run labels.
     """
-    runs = list(dict.fromkeys(run_of))
-    colors = plt.cm.tab10(np.arange(len(runs)))
+    runs = [case for case in dl.EXPERIMENTS if case in set(run_of)]
     fig, axes = plt.subplots(1, len(panels), figsize=(4.8 * len(panels), 4.8),
                              squeeze=False)
     for ax, panel in zip(axes[0], panels):
@@ -530,10 +584,10 @@ def plot_itcz_predicted_vs_observed(observed, run_of, panels, title, out_path):
         hi = float(max(observed.max(), pred.max()))
         pad = 0.05 * (hi - lo)
         lim = (lo - pad, hi + pad)
-        for color, run in zip(colors, runs):
+        for run in runs:
             m = run_of == run
-            ax.scatter(observed[m], pred[m], s=12, color=color, alpha=0.7,
-                       edgecolors="none", label=run)
+            ax.scatter(observed[m], pred[m], s=14, alpha=0.7, edgecolors="none",
+                       label=run, **case_marker_style(run))
         ax.plot(lim, lim, color="k", lw=1.0, ls="--")
         ax.set_xlim(lim)
         ax.set_ylim(lim)
@@ -599,8 +653,7 @@ def plot_itcz_scatter(predictors, response, fits, single_vars, title, out_path):
     ``regression.fit_scalar_ols`` on that single predictor) are annotated.
     ``predictors`` and ``response`` are the pooled Datasets/DataArray on ``sample``.
     """
-    runs = list(dict.fromkeys(predictors["run"].values))
-    colors = plt.cm.tab10(np.arange(len(runs)))
+    runs = [case for case in dl.EXPERIMENTS if case in set(predictors["run"].values)]
     run_of = predictors["run"].values
     y = response.values
 
@@ -608,10 +661,10 @@ def plot_itcz_scatter(predictors, response, fits, single_vars, title, out_path):
                              squeeze=False)
     for ax, var in zip(axes[0], single_vars):
         x = predictors[var].values
-        for color, run in zip(colors, runs):
+        for run in runs:
             m = run_of == run
-            ax.scatter(x[m], y[m], s=12, color=color, alpha=0.7,
-                       edgecolors="none", label=run)
+            ax.scatter(x[m], y[m], s=14, alpha=0.7, edgecolors="none", label=run,
+                       **case_marker_style(run))
 
         fit = fits[var]
         b0 = float(fit["coef"].sel(param="intercept"))
@@ -706,7 +759,7 @@ def plot_case_grid_page(field, title, cmap, vmin, vmax, pdf, rasterized):
     units = field.attrs["units"]
     for i, co2 in enumerate(dl.CO2_LEVELS):
         for j, hosing in enumerate(dl.HOSING_LEVELS):
-            ax, panel = axes[i, j], field.sel(co2=co2, hosing=hosing)
+            ax, panel = axes[i, j], centered_lon(field.sel(co2=co2, hosing=hosing))
             mesh = ax.pcolormesh(
                 panel["lon"], panel["lat"], panel, cmap=cmap, vmin=vmin, vmax=vmax,
                 shading="auto", transform=DATA_CRS, rasterized=rasterized,
@@ -729,11 +782,11 @@ def plot_case_grid_book(grid, pdf, rasterized):
     ``viridis`` scaled to the 1st-99th percentile over all nine panels; the
     difference pages use a diverging map with symmetric bounds (±99th percentile
     of |difference| over the page; white = 0): ``RdBu`` (wet = blue) for water
-    fluxes in kg m-2 s-1, else ``RdBu_r``.
+    fluxes (``data_loader.WATER_FLUX_UNITS``), else ``RdBu_r``.
     """
     header = (f"{grid.name}: {grid.attrs['long_name']} ({grid.attrs['units']}), "
               f"CESM1 mean {grid.attrs['time_mean']}")
-    diverging = "RdBu" if grid.attrs["units"] == "kg m-2 s-1" else "RdBu_r"
+    diverging = "RdBu" if grid.attrs["units"] == dl.WATER_FLUX_UNITS else "RdBu_r"
     (raw_label, _), *difference_pages = CASE_GRID_PAGES
     low, high = np.nanpercentile(grid.values, [1, 99])
     plot_case_grid_page(grid, f"{header}\n{raw_label}", "viridis", low, high,

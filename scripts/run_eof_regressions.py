@@ -18,12 +18,12 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from matplotlib.backends.backend_pdf import PdfPages
 
 import data_loader as dl
 import eof
 import regression as reg
 from output import (
+    PdfBook,
     plot_eof_patterns,
     plot_pc_prediction,
     plot_pc_regression,
@@ -92,7 +92,7 @@ def run_for_predictand(name, smoothing, all_sets):
           f"(cum var {eof_ds.attrs['total_variance_fraction'] * 100:.1f}%); "
           f"leading % = {(eof_ds['variance_fraction'].values[:6] * 100).round(1)}")
 
-    pat_units = "K" if name == "tas" else "kg m-2 s-1"
+    pat_units = predictand["units"]
     plot_eof_patterns(
         eof_ds, f"EOF patterns: {name} ({tag} anomalies)", pat_units,
         os.path.join(out_dir, "eof_patterns.pdf"),
@@ -106,7 +106,7 @@ def run_for_predictand(name, smoothing, all_sets):
     decadal = smoothing["block"] is not None  # the focus variant gets figures
     var_frac = eof_ds["variance_fraction"].values
     # One multi-page PDF collects every set's regression figure (one page per set).
-    reg_pdf = PdfPages(os.path.join(out_dir, "pc_regression.pdf")) if decadal else None
+    reg_pdf = PdfBook(os.path.join(out_dir, "pc_regression.pdf")) if decadal else None
     fits = {}
     for set_def in reg.select_predictor_sets(all_sets):
         num = set_def["number"]
@@ -131,7 +131,7 @@ def run_for_predictand(name, smoothing, all_sets):
     # default sets-5-&-10 run renders only set 10 here, --all-sets renders 6, 9, 10).
     if decadal:
         reg_pdf.close()
-        with PdfPages(os.path.join(out_dir, "pc_prediction.pdf")) as pred_pdf:
+        with PdfBook(os.path.join(out_dir, "pc_prediction.pdf")) as pred_pdf:
             for num in (n for n in (6, 9, 10) if n in fits):
                 pc_fit, names = fits[num]
                 plot_pc_prediction(

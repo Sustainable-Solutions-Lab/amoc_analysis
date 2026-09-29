@@ -1,37 +1,31 @@
-"""Predicted decadal-mean field changes for end-of-century scenarios.
+"""Predicted decadal-mean field changes for 3 K of warming with and without AMOC decline.
 
 Uses the decadal (10-year block-mean) pooled regressions in
 ``data/output/regression/<predictand>/decadal10/`` to map the predicted change in
-the gridded tas, prc (convective precip), and pr (total precip) fields for two
-end-of-century SSP5-8.5 conditions, relative to a preindustrial baseline, plus
-their difference (which isolates the AMOC-slowdown fingerprint). Done for set 5
-(Tglob + AMOC) and set 10 (Tglob + AMOC + Tglob*AMOC interaction).
+the gridded tas, prc (convective precip), and pr (total precip) fields relative to
+a control baseline, for set 5 (Tglob + AMOC) and set 10 (Tglob + AMOC +
+Tglob*AMOC interaction).
 
-The baseline is the piControl run for tas/prc; the 2-run total-pr analysis has no
-piControl, so for pr the baseline is the historical-ssp585 1850-1900 mean (the
-Berkeley-Earth reference period; ~287.18 K / 17.84 Sv, ~the piControl state). The
-set-10 centering means (mT, mA) are read per predictand from the coef file's
-``centering_mean_*`` attributes, so the 2-run pr fit uses its own centering.
+Addresses: where does an AMOC decline exacerbate vs. ameliorate the response to
+global warming? Three (Tglob, AMOC) states:
 
-Addresses: where does AMOC slowdown exacerbate vs. ameliorate the CO2-induced
-changes in surface temperature and precipitation? We compare the high-CO2 world
-WITH AMOC slowdown (SSP585) against two counterfactuals WITHOUT slowdown (AMOC
-restored to the control value), which bracket the unknown global-mean-temperature
-effect of the slowdown:
+    baseline   : Tglob = T0,       AMOC = 20 Sv
+    warm       : Tglob = T0 + 3 K, AMOC = 20 Sv  (warming, AMOC unchanged)
+    warm-weak  : Tglob = T0 + 3 K, AMOC =  6 Sv  (warming, AMOC 20 -> 6 Sv)
 
-    piControl    : Tglob = 287.207, AMOC = 17.44
-    SSP585       : Tglob = 293.090, AMOC =  7.34
-    SSP585-adj1  : Tglob = 294.665, AMOC = 17.44  (assm. 1: slowdown cooled by
-                   0.1558 K/Sv * 10.10 Sv ~= 1.575 K, so add it back)
-    SSP585-adj2  : Tglob = 293.090, AMOC = 17.44  (assm. 2: slowdown had no global
-                   temperature effect; only AMOC is restored)
+T0 is the 1xCO2 control's global-mean tas over its AMOC-present years (the years
+it contributes to the pooled fit). Global-mean warming is the same 3 K in both
+warm states, so warm-weak - warm is the AMOC-decline effect at fixed global-mean
+temperature: a pure spatial redistribution in tas (global mean ~0), though not
+necessarily in precipitation. Both warm states sit inside the sampled predictor
+space: 4xCO2_m03Sv (~291.5 K, ~20 Sv) and 4xCO2_p03Sv (~290.4 K, ~5.5 Sv) are
+close neighbours, so these are interpolations, not extrapolations.
 
 The predicted change between two conditions is coef . (predictor(X) - predictor(R));
 the intercept cancels. Set 5 uses raw predictors; set 10 uses the centered columns
-(q_Tglob, q_AMOC, q_Tglob*AMOC) from add_quadratic_columns, so its columns are
-evaluated with the decadal pooled centering means and the interaction term is
-formed per condition. SSP585 - adjN isolates the AMOC-slowdown effect under each
-assumption (under adj2, global-mean tas is held fixed, so it is pure pattern).
+(q_Tglob, q_AMOC, q_Tglob.AMOC), evaluated with the pooled centering means read
+from the coef file's ``centering_mean_*`` attributes, with the interaction term
+formed per condition.
 
     python scripts/predict_scenarios.py
 """
@@ -44,49 +38,40 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
-from matplotlib.backends.backend_pdf import PdfPages
 
 import data_loader as dl
 import regression as reg
-from output import PROJECTION, plot_coefficient_map
+from output import PROJECTION, PdfBook, plot_coefficient_map
 
 REG_BASE = os.path.join(dl._REPO_ROOT, "data", "output", "regression")
 OUT_DIR = os.path.join(dl._REPO_ROOT, "data", "output", "scenarios")
 
-# (Tglob [K], AMOC [Sv]) per condition.
-COND = {
-    "piControl": (287.207, 17.44),
-    "SSP585": (293.090, 7.34),
-    "SSP585-adj1": (294.665, 17.44),  # assm.1: add back AMOC-implied 1.575 K cooling
-    "SSP585-adj2": (293.090, 17.44),  # assm.2: no global-T effect; only AMOC restored
-}
+BASELINE_CASE = "1xCO2"
+WARMING_K = 3.0
+AMOC_STRONG_SV = 20.0
+AMOC_WEAK_SV = 6.0
 
 # Columns to map: (title, condition X, reference R).
 SCENARIOS = [
-    ("SSP585 − piControl", "SSP585", "piControl"),
-    ("SSP585-adj1 − piControl", "SSP585-adj1", "piControl"),
-    ("SSP585 − adj1  (AMOC effect, assm.1)", "SSP585", "SSP585-adj1"),
-    ("SSP585-adj2 − piControl", "SSP585-adj2", "piControl"),
-    ("SSP585 − adj2  (AMOC effect, assm.2)", "SSP585", "SSP585-adj2"),
+    (f"+{WARMING_K:g} K, AMOC {AMOC_STRONG_SV:g} Sv − baseline", "warm", "baseline"),
+    (f"+{WARMING_K:g} K, AMOC {AMOC_WEAK_SV:g} Sv − baseline", "warm-weak", "baseline"),
+    (f"AMOC {AMOC_STRONG_SV:g}→{AMOC_WEAK_SV:g} Sv effect at +{WARMING_K:g} K", "warm-weak", "warm"),
 ]
 
 # Page layout. A column is either an int (an absolute map of SCENARIOS[i]) or a
 # tuple (title, numerator_idx, denominator_idx) giving a percentage ratio
-# 100 * change(num) / change(den). Page 1 = change relative to piControl (cols
-# 1,2,4); page 2 = AMOC-slowdown effect (cols 3,5); page 3 = that effect as a
-# percentage of the no-slowdown CO2-only change, i.e. (SSP585-adjN)/(adjN-piControl)
-# -- the fractional increase(+)/decrease(-) in the response caused by the slowdown.
+# 100 * change(num) / change(den). Page 1 = the three changes; page 2 = the AMOC
+# effect as a percentage of the warming-only change -- the fractional increase(+)
+# or decrease(-) in the warming response caused by the AMOC decline.
 PAGES = [
-    ("change relative to piControl (with / without AMOC slowdown)", [0, 1, 3]),
-    ("AMOC-slowdown effect (SSP585 − adjN)", [2, 4]),
-    ("AMOC-slowdown effect as % of the no-slowdown CO₂ change  [(SSP585−adjN)/(adjN−piControl)]",
-     [("SSP585 − adj1  ÷ (adj1 − piControl)", 2, 1),
-      ("SSP585 − adj2  ÷ (adj2 − piControl)", 4, 3)]),
+    (f"{WARMING_K:g} K warming with / without AMOC {AMOC_STRONG_SV:g}→{AMOC_WEAK_SV:g} Sv",
+     [0, 1, 2]),
+    ("AMOC-decline effect as % of the warming-only change",
+     [("AMOC effect ÷ warming-only change", 2, 0)]),
 ]
 
-# The page-3 ratio explodes where the denominator (adjN−piControl) crosses zero.
-# Fix every page-3 panel to a common +/-100% scale so panels are directly
-# comparable (values beyond +/-100% saturate).
+# The page-2 ratio explodes where the warming-only change crosses zero; fix every
+# ratio panel to a common +/-100% scale (values beyond saturate).
 RATIO_PCT_BOUND = 100.0
 
 SET_FILES = {
@@ -95,21 +80,24 @@ SET_FILES = {
 }
 
 
-def conditions_for(name):
-    """Scenario (Tglob, AMOC) states for a predictand. tas/prc use the piControl
-    baseline; the 2-run total-pr set has no piControl, so its baseline (the
-    ``piControl`` reference) is the historical-ssp585 1850-1900 mean."""
-    if name != "pr":
-        return COND
-    base = xr.open_dataset(
-        os.path.join(dl.PROCESSED_DIR, "scalars_annual_CESM2_historical-ssp585.nc")
-    ).sel(year=slice(1850, 1900))
-    cond = dict(COND)
-    cond["piControl"] = (
-        float(base["tas_global_mean"].mean()),
-        float(base["amoc_strength"].mean()),
-    )
-    return cond
+def baseline_tglob():
+    """Global-mean tas of the baseline case over the years it contributes to the
+    pooled fit (years with every predictor present)."""
+    scal = xr.open_dataset(
+        os.path.join(dl.PROCESSED_DIR, dl.scalar_file(BASELINE_CASE))
+    )[reg.PREDICTOR_UNION]
+    valid = scal.to_dataframe().dropna().index
+    return float(scal["tas_global_mean"].sel(year=valid).mean())
+
+
+def conditions():
+    """(Tglob [K], AMOC [Sv]) per condition."""
+    t0 = baseline_tglob()
+    return {
+        "baseline": (t0, AMOC_STRONG_SV),
+        "warm": (t0 + WARMING_K, AMOC_STRONG_SV),
+        "warm-weak": (t0 + WARMING_K, AMOC_WEAK_SV),
+    }
 
 
 def predicted_change(coef, set_num, condX, condR, cond, mT, mA):
@@ -127,27 +115,21 @@ def predicted_change(coef, set_num, condX, condR, cond, mT, mA):
             + coef.sel(param="q_Tglob.AMOC") * (qx[2] - qr[2]))
 
 
-def run_for_predictand(name):
+def run_for_predictand(name, cond):
     predictand = reg.PREDICTANDS[name]
-    units, cmap = predictand["units"], predictand.get("cmap", "RdBu_r")
+    units, cmap = predictand["units"], predictand["cmap"]
     sets = sorted(SET_FILES)
     dsets = {
         s: xr.open_dataset(os.path.join(REG_BASE, name, "decadal10", SET_FILES[s]))
         for s in sets
     }
     coefs = {s: dsets[s]["coef"] for s in sets}
-    # set-10 centering means as the fit used them (per predictand; the 2-run pr fit
-    # differs from the 4-run tas/prc fits), read from the coef file's attributes.
     mT = float(dsets[10].attrs["centering_mean_Tglob_K"])
     mA = float(dsets[10].attrs["centering_mean_AMOC_Sv"])
-    cond = conditions_for(name)
-    print(f"[{name}] set-10 centering: Tglob={mT:.3f} K, AMOC={mA:.3f} Sv; "
-          f"baseline (piControl ref) Tglob={cond['piControl'][0]:.3f} K, "
-          f"AMOC={cond['piControl'][1]:.3f} Sv")
+    print(f"[{name}] set-10 centering: Tglob={mT:.3f} K, AMOC={mA:.3f} Sv")
 
-    ratio_bound = RATIO_PCT_BOUND  # common ±100% scale on page 3 for all panels
     out_path = os.path.join(OUT_DIR, f"predicted_change_{name}.pdf")
-    with PdfPages(out_path) as pdf:
+    with PdfBook(out_path) as pdf:
         for page_title, cols in PAGES:
             fig, axes = plt.subplots(
                 len(sets), len(cols),
@@ -164,11 +146,13 @@ def run_for_predictand(name):
                         with np.errstate(divide="ignore", invalid="ignore"):
                             ratio = 100.0 * num / den
                         change = ratio.where(np.isfinite(ratio))
-                        u, bnd = "% of CO₂-only change", ratio_bound
+                        u, bnd = "% of warming-only change", RATIO_PCT_BOUND
                     else:  # absolute map of SCENARIOS[col]
                         title, condX, condR = SCENARIOS[col]
                         change = predicted_change(coef, set_num, condX, condR, cond, mT, mA)
                         u, bnd = f"Δ{name} ({units})", None
+                        print(f"[{name}] set {set_num}: {title}: global mean "
+                              f"{float(dl.global_mean(change)):.4g} {units}")
                     plot_coefficient_map(
                         change, xr.zeros_like(change),  # zeros -> no stippling
                         title=f"set {set_num}: {title}", units=u,
@@ -186,8 +170,11 @@ def run_for_predictand(name):
 
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
+    cond = conditions()
+    for label, (t, a) in cond.items():
+        print(f"{label:10s}: Tglob={t:.3f} K, AMOC={a:.2f} Sv")
     for name in ("tas", "prc", "pr"):
-        run_for_predictand(name)
+        run_for_predictand(name, cond)
 
 
 if __name__ == "__main__":

@@ -22,10 +22,9 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from matplotlib.backends.backend_pdf import PdfPages
 
 import data_loader as dl
-from output import plot_case_grid_book
+from output import PdfBook, plot_case_grid_book
 
 OUT_DIR = os.path.join(dl._REPO_ROOT, "data", "output", "case_grid")
 FIRST_YEAR, LAST_YEAR = 2101, 2150
@@ -43,7 +42,7 @@ def main():
     os.makedirs(OUT_DIR, exist_ok=True)
     suffix = "_vector" if args.vector else ""
     out_path = os.path.join(OUT_DIR, f"case_grid_{FIRST_YEAR}-{LAST_YEAR}{suffix}.pdf")
-    with PdfPages(out_path) as pdf:
+    with PdfBook(out_path) as pdf:
         for var in args.variables:
             print(f"  {var}")
             plot_case_grid_book(dl.case_grid_time_mean(var, FIRST_YEAR, LAST_YEAR),

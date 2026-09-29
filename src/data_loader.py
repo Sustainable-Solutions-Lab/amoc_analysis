@@ -18,8 +18,10 @@ This module maps the CAM names used by the analysis to CMIP names (see
 ``VARIABLES``): ``TREFHT`` -> ``tas`` (K), ``PRECC`` -> ``prc`` (convective
 precipitation), ``PRECT`` -> ``pr`` (total precipitation). CAM precipitation is a
 liquid-water-equivalent rate in m s-1 (the units label is genuine: the global mean
-PRECT matches the global mean QFLX evaporation, ~2.86 mm/day), so it is multiplied
-by the density of water, 1000 kg m-3, to give kg m-2 s-1. Provenance attributes
+PRECT matches the global mean QFLX evaporation, ~2.86 mm/day). All water fluxes
+(precipitation, snowfall, evaporation, P - E) are expressed in mm/day of liquid
+water: m s-1 times 1000 mm/m x 86400 s/day, and QFLX (kg m-2 s-1) times 86400,
+since 1 kg m-2 of water is a 1 mm layer. Provenance attributes
 record the source file, variable, and conversion.
 
 AMOC strength is not in the gridded files; it is read from the separate CSV
@@ -39,23 +41,27 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INPUT_DIR = os.path.join(_REPO_ROOT, "data", "input")
 PROCESSED_DIR = os.path.join(_REPO_ROOT, "data", "processed")
 
-# Density of liquid water (kg m-3): converts CAM precipitation rates (m s-1) to
-# the CMIP water mass flux (kg m-2 s-1).
-WATER_DENSITY = 1000.0
+# Water fluxes are reported in mm/day of liquid water. CAM precipitation rates are
+# m s-1 (x 1000 mm/m x 86400 s/day); QFLX is a mass flux in kg m-2 s-1, and 1 kg m-2
+# of water is a 1 mm layer, so it needs only the x 86400 s/day.
+SECONDS_PER_DAY = 86400.0
+M_PER_S_TO_MM_PER_DAY = 1000.0 * SECONDS_PER_DAY
+KG_M2_S_TO_MM_PER_DAY = SECONDS_PER_DAY
+WATER_FLUX_UNITS = "mm/day"
 
 # Analysis variables. Each has a ``definition`` (a formula in CAM field names,
 # recorded as provenance), a ``compute`` function mapping the raw CAM Dataset to
 # the field, and output ``units``/``long_name``. Three CAM fields carry CMIP names
-# (tas, prc, pr); the other raw fields keep their CAM names, with precipitation
-# rates converted from m s-1 to kg m-2 s-1; derived fields are combinations.
+# (tas, prc, pr); the other raw fields keep their CAM names, with water
+# fluxes converted to mm/day; derived fields are combinations.
 # Source-attribute mislabels corrected here: RHREFHT is labeled "fraction" but is
 # in percent (values ~20-110); SRFRAD ("Net radiative flux at surface") is
 # FSNS + FLDS (absorbed shortwave plus downwelling longwave), not a net flux.
 _CMIP_RENAMED_FIELDS = [
     # (analysis name, CAM field, scale, units, long_name)
     ("tas", "TREFHT", 1.0, "K", "Near-Surface Air Temperature"),
-    ("prc", "PRECC", WATER_DENSITY, "kg m-2 s-1", "Convective Precipitation"),
-    ("pr", "PRECT", WATER_DENSITY, "kg m-2 s-1", "Precipitation (total)"),
+    ("prc", "PRECC", M_PER_S_TO_MM_PER_DAY, WATER_FLUX_UNITS, "Convective Precipitation"),
+    ("pr", "PRECT", M_PER_S_TO_MM_PER_DAY, WATER_FLUX_UNITS, "Precipitation (total)"),
 ]
 _CAM_FIELDS = [
     # (CAM field, scale, units, long_name)
@@ -63,11 +69,11 @@ _CAM_FIELDS = [
     ("TREFMXAV", 1.0, "K", "Average of TREFHT daily maximum"),
     ("QREFHT", 1.0, "kg/kg", "Reference height specific humidity"),
     ("RHREFHT", 1.0, "%", "Reference height relative humidity"),
-    ("PRECL", WATER_DENSITY, "kg m-2 s-1", "Large-scale (stable) precipitation (liq + ice)"),
-    ("PRECSH", WATER_DENSITY, "kg m-2 s-1", "Shallow convection precipitation"),
-    ("PRECSC", WATER_DENSITY, "kg m-2 s-1", "Convective snowfall (water equivalent)"),
-    ("PRECSL", WATER_DENSITY, "kg m-2 s-1", "Large-scale (stable) snowfall (water equivalent)"),
-    ("QFLX", 1.0, "kg m-2 s-1", "Surface water flux (evaporation)"),
+    ("PRECL", M_PER_S_TO_MM_PER_DAY, WATER_FLUX_UNITS, "Large-scale (stable) precipitation (liq + ice)"),
+    ("PRECSH", M_PER_S_TO_MM_PER_DAY, WATER_FLUX_UNITS, "Shallow convection precipitation"),
+    ("PRECSC", M_PER_S_TO_MM_PER_DAY, WATER_FLUX_UNITS, "Convective snowfall (water equivalent)"),
+    ("PRECSL", M_PER_S_TO_MM_PER_DAY, WATER_FLUX_UNITS, "Large-scale (stable) snowfall (water equivalent)"),
+    ("QFLX", KG_M2_S_TO_MM_PER_DAY, WATER_FLUX_UNITS, "Surface water flux (evaporation)"),
     ("LHFLX", 1.0, "W/m2", "Surface latent heat flux (upward)"),
     ("SHFLX", 1.0, "W/m2", "Surface sensible heat flux (upward)"),
     ("FSDS", 1.0, "W/m2", "Downwelling solar flux at surface"),
@@ -98,12 +104,12 @@ _CAM_FIELDS = [
 ]
 _DERIVED_FIELDS = [
     # (analysis name, definition, compute, units, long_name)
-    ("pr_minus_evap", "PRECT * 1000 - QFLX",
-     lambda ds: ds["PRECT"] * WATER_DENSITY - ds["QFLX"],
-     "kg m-2 s-1", "Precipitation minus evaporation"),
-    ("prsn", "(PRECSC + PRECSL) * 1000",
-     lambda ds: (ds["PRECSC"] + ds["PRECSL"]) * WATER_DENSITY,
-     "kg m-2 s-1", "Snowfall (water equivalent)"),
+    ("pr_minus_evap", "PRECT * 8.64e7 - QFLX * 86400",
+     lambda ds: ds["PRECT"] * M_PER_S_TO_MM_PER_DAY - ds["QFLX"] * KG_M2_S_TO_MM_PER_DAY,
+     WATER_FLUX_UNITS, "Precipitation minus evaporation"),
+    ("prsn", "(PRECSC + PRECSL) * 8.64e7",
+     lambda ds: (ds["PRECSC"] + ds["PRECSL"]) * M_PER_S_TO_MM_PER_DAY,
+     WATER_FLUX_UNITS, "Snowfall (water equivalent)"),
     ("toa_net_down", "FSNT - FLNT",
      lambda ds: ds["FSNT"] - ds["FLNT"],
      "W/m2", "Net downward radiation at top of model"),

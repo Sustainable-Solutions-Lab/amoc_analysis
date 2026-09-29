@@ -15,13 +15,12 @@ import argparse
 import os
 import sys
 
-from matplotlib.backends.backend_pdf import PdfPages
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import data_loader as dl
 import regression as reg
-from output import plot_set
+from output import PdfBook, plot_set
 
 OUT_BASE = os.path.join(dl._REPO_ROOT, "data", "output", "regression")
 
@@ -51,8 +50,8 @@ CAVEATS = """Regression outputs: pooled per-grid-point OLS of a gridded predicta
 - Predictands: every variable in data_loader.VARIABLES (all CAM fields in the
   input files plus derived fields such as pr_minus_evap); each variable's units
   and definition are in its NetCDF attributes. 'prc' is CONVECTIVE precipitation
-  (CAM PRECC); 'pr' is TOTAL precipitation (CAM PRECT); precipitation rates are
-  kg m-2 s-1.
+  (CAM PRECC); 'pr' is TOTAL precipitation (CAM PRECT); water fluxes are
+  mm/day.
 """
 
 
@@ -63,7 +62,7 @@ def set_labels(set_def):
 
 def run_for_predictand(name, smoothing, all_sets, books):
     """Fit every selected set for predictand ``name``; write each fit's NetCDF and
-    add its maps as a page of ``books[set number]`` (an open ``PdfPages``)."""
+    add its maps as a page of ``books[set number]`` (an open ``PdfBook``)."""
     predictand = reg.PREDICTANDS[name]
     tag = smoothing["tag"]
     out_dir = os.path.join(OUT_BASE, name, smoothing["subdir"])
@@ -125,7 +124,7 @@ def main():
             s["number"]: os.path.join(book_dir, f"coef_set{s['number']}_{set_labels(s)}.pdf")
             for s in set_defs
         }
-        books = {number: PdfPages(path) for number, path in book_paths.items()}
+        books = {number: PdfBook(path) for number, path in book_paths.items()}
         for name in PREDICTAND_NAMES:
             run_for_predictand(name, smoothing, args.all_sets, books)
         for number, book in books.items():
