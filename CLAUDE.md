@@ -93,6 +93,14 @@ rather than hiding them.
 - Clean fail-fast approach — if required arguments are not supplied, the code
   should fail immediately with a clear error.
 
+## Legacy CESM1 code (`src/amoc_cesm/`)
+- `src/amoc_cesm/` and its scripts (`scripts/extract_postproc.py`,
+  `inventory.py`, `make_pair_compare_book.py`, `make_sss_maps.py`,
+  `make_steady_state_book.py`, `regrid_salt.py`) were merged in from the former
+  `amoc-cesm` repository (CESM1 CO₂ × hosing factorial). The data they were
+  written against is outmoded; only the CESM2 data used by the rest of this
+  repository is current. See `src/amoc_cesm/README.md` for its original docs.
+
 ## Version Control
 - Do not concern yourself with committing or pushing to the remote repository.
   The user manages git commits and pushes; do not offer to commit/push, ask

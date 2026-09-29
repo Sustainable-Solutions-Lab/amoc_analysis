@@ -1,0 +1,504 @@
+# amoc-cesm
+
+Separating the climate effects of **global warming** from the effects of **AMOC
+slowdown/shutdown**, using annual-mean 2D atmospheric fields from CESM1.
+
+## Experimental design
+
+A 3×3 factorial: CO₂ concentration × North Atlantic freshwater hosing.
+
+|            | −0.3 Sv        | 0 Sv         | +0.3 Sv             |
+|------------|----------------|--------------|---------------------|
+| **1×CO₂**  | `1xCO2_neghos` | `picontrol`  | `1xCO2_hosing_FIX`  |
+| **2×CO₂**  | `2xCO2_neghos` | `2xCO2_noh`  | `2xCO2_hosing_FIX`  |
+| **4×CO₂**  | `4xCO2_neghos` | `4xCO2_noh`  | `4xCO2_hosing_FIX`  |
+
+Negative hosing (freshwater extraction from the North Atlantic) strengthens the
+AMOC; positive hosing weakens or shuts it down. Comparing along the CO₂ axis
+isolates the warming response; comparing along the hosing axis isolates the AMOC
+response; the interaction terms say how much the two effects are separable.
+
+**Status:** all nine cells have run. The +0.3 Sv column was delivered twice —
+the `*_hosing_FIX` runs above are canonical, and the shorter `*_hosing_oldcrash`
+runs they replace sit in `config.ALTERNATE_CASES`, unused by either book so far.
+Run `python scripts/inventory.py` for the current state of the data on disk.
+
+The +0.3 Sv runs end early: 2150, 2140 and 2135 at 1×, 2× and 4×CO₂, against
+2150 for everything else. That is what sets both analysis windows below.
+
+Two file-naming conventions are in play: the cases delivered first are
+`<VAR>_ann_mean.nc`, the +0.3 Sv runs are `<VAR>_annual.nc`. Same grid, same
+annual means, same year convention — each `Case` reports its own suffix, and
+asserts it finds exactly one.
+
+## Data
+
+Not in this repository (~1.6 GB and growing). Expected location:
+
+```
+data/input/Annual_Mean_2D_Fileds_ATMs/<case>/<VAR>_ann_mean.nc
+```
+
+Each file holds one variable on a regular 144×96 lon/lat grid (CAM finite
+volume, 2.5°×1.9°), as `(time, lat, lon)` annual means, `365_day` calendar.
+
+- Perturbation cases: 100 years (model years 2051–2150).
+- `picontrol`: 301 years (1850–2150), usable as a control and for internal
+  variability / significance testing.
+
+### Time axes are already aligned
+
+All cases share the same 365-day calendar and the same annual time stamps, and
+the perturbation years 2051–2150 are exactly the last 100 years of `picontrol`
+(raw values identical to the day). Loading therefore replaces `time` with an
+integer `year` coordinate by default, so cases difference directly:
+
+```python
+load_var("4xCO2_noh", "FLUT") - load_var("picontrol", "FLUT")   # aligns on year
+```
+
+Two records are **11-month means with January missing** (`time_bnds` span 334
+days rather than 365): `picontrol` 1850 and `4xCO2_noh` 2051. `load_var` drops
+them by default (`drop_partial=True`), which leaves 2052–2150 as the span common
+to every case. The `4xCO2_noh` gap is in all 38 of its variables, so it is a
+property of the run's archive, not of one file.
+
+### Analysis windows
+
+`ANALYSIS_YEARS = 2052-2135` is the window common to every case, and is the
+default for all loading — including `picontrol`, which is trimmed to these same
+years rather than averaged over its full record. Same-year weather is
+uncorrelated across branches, so this cancels no noise; the reason to match years
+is slow transient drift in the ocean, which is shared with the control over the
+same span and therefore differences out. Pass `years=None` to recover the full
+1851–2150 control, e.g. for internal-variability statistics.
+
+`STEADY_STATE_YEARS = 2086-2135` is the quasi-steady-state window: 50 years,
+placed at the latest point every case reaches. It is deliberately *not* the last
+50 years of each run. `4xCO2_hosing_FIX` stops at 2135, so the old 2101–2150
+window would have averaged 50 years in some panels of a page and 35 in others
+and said nothing about it — a difference in run length reading as a difference
+in climate. `analysis.steady_state` asserts the window is fully present rather
+than trusting the constant to stay in step with the data.
+
+Two differencing modes, in `amoc_cesm.analysis`:
+
+```python
+transient_anomaly("4xCO2_noh", "TREFMXAV")       # year for year vs. picontrol
+steady_state_anomaly("4xCO2_noh", "TREFMXAV")    # last-50-year means, differenced
+steady_state("4xCO2_noh", "TREFMXAV")            # last-50-year mean, no reference
+```
+
+Both take `reference=` to compare against any case, not just the control.
+
+39 variables are available (radiation, clouds, precipitation, surface fluxes,
+near-surface temperature and humidity). `TREFHT` is currently present only in
+`picontrol` — the perturbation cases carry `TREFMNAV`/`TREFMXAV` but not the
+mean; worth requesting from the run archive.
+
+## Setup
+
+```bash
+python -m venv .venv          # already created
+.venv/bin/pip install -r requirements.txt
+```
+
+## Layout
+
+```
+src/amoc_cesm/     importable package
+  config.py        paths, Case registry for the 3x3 design, analysis windows
+  io.py            loading, area-weighted means, climatologies
+  analysis.py      transient and steady-state anomalies
+  significance.py  Welch t-test vs. the control, optional FDR control
+  variables.py     display units, scaling, colormaps, unit-error assertions
+  regrid.py        POP ocean grid -> CAM 144x96, and the SALT case registry
+  postproc.py      the NAHosMIP_v2 delivery: SSS regrid, MOC/N_HEAT/N_SALT
+  plotting.py      the 3x3 grid page: Robinson maps + zonal-mean sidebars
+  books.py         multi-page PDF assembly
+  workflows/
+    steady_state.py  quasi-steady-state workflow (pages now, tables later)
+    pair_compare.py  four-case comparison paired by AMOC state
+    sss_maps.py      end-of-run sea-surface-salinity map pages
+    transient.py     time-dependent workflow (to be built)
+scripts/           runnable entry points
+  inventory.py               what cases/variables/years are on disk
+  make_steady_state_book.py  build the quasi-steady-state PDF book
+  make_pair_compare_book.py  build the four-case AMOC-state comparison book
+  regrid_salt.py             regrid the POP SSS extracts onto the CAM grid
+  extract_postproc.py        NAHosMIP_v2 SSS + ocean transports
+data/input/        input NetCDF (not committed)
+  Annual_Mean_2D_Fileds_ATMs/  CAM annual means, per case
+  SALT_extracted/              POP monthly SSS, per case (regridded on demand)
+  postproc/                    NAHosMIP_v2: 4 components, 2051-2055, + verification/
+data/output/       generated books, figures, tables (not committed)
+```
+
+## Two analysis workflows
+
+Everything below the reduction step is shared: `plotting.grid_3x3` takes a dict
+of `{(co2, hosing): DataArray}` and knows nothing about which analysis produced
+it, so both workflows draw the same 3×3 page — rows are CO₂ levels, columns are
+hosing levels, and cases that have not run render as labeled placeholders.
+
+- **Quasi-steady-state** (`workflows/steady_state.py`) — the 2086–2135 mean of
+  each run treated as an equilibrium climate, on the 3×3 grid. Built.
+- **Pair comparison** (`workflows/pair_compare.py`) — four cases only, paired by
+  AMOC state rather than hosing level. Built; see below.
+- **Time-dependent** (`workflows/transient.py`) — year-for-year against the
+  control. To be built; it adds only its own reductions.
+
+### Making a book
+
+```bash
+python scripts/make_steady_state_book.py RHREFHT PRECT CLDTOT
+python scripts/make_steady_state_book.py TREFMXAV --png    # also write page PNGs
+python scripts/make_steady_state_book.py                   # every available field
+python scripts/make_steady_state_book.py --name draft      # fixed name instead
+```
+
+**Build it in volumes, and build it detached.** A full book is several minutes
+of work that is only written to disk when the last page is done, and an
+interrupted run leaves a large, plausible-looking PDF with no trailer — this has
+silently cost complete builds more than once. `books.is_complete` is the check
+that tells a finished PDF from a truncated one; size and page count cannot.
+
+```bash
+setsid nohup ./.venv/bin/python scripts/make_steady_state_book.py \
+  --name steady_state_book_9case --by-letter --resume \
+  < /dev/null > data/output/book_build.log 2>&1 &
+```
+
+`--by-letter` writes one volume per initial letter (`..._C.pdf`, `..._F.pdf`, …),
+each closed before the next begins, so an interruption costs one volume;
+`--resume` re-runs the identical command and skips whichever volumes already
+carry a valid trailer. `--volume-size N` splits by count instead. `setsid` is not
+decoration: plain `nohup ... &` leaves the build in the shell's process group,
+where it dies with the session.
+
+Books land in `data/output/books/` as
+`steady_state_book_<yyyy-mm-dd-hh-mm-ss>.pdf`. The timestamp means successive
+runs accumulate rather than overwrite: a book records what the data looked like
+when it was built, and cases are still arriving. `--name` overrides the stem when
+you want a stable filename.
+
+**Four pages per variable.** The absolute page has its own sequential scale;
+the three difference pages share **one** diverging scale, chosen for the
+variable as a whole rather than per page. That is the point — the three answer
+three questions about the same field and are meant to be read against each
+other, and per-page scaling makes a small AMOC effect fill its colorbar exactly
+as a large warming effect fills its own. The shared limit spans every difference
+on every page so nothing is clipped; `--color-percentile 98` clips instead when
+one page's outliers would otherwise leave another blank.
+
+| page | what it shows | reference for each panel |
+|---|---|---|
+| absolute | climatology, shared sequential scale | — |
+| anomaly | total response to both perturbations | `picontrol` |
+| **warming effect** | CO₂ response with the AMOC state held | 1×CO₂ in the *same column* |
+| **AMOC effect** | hosing response with forcing held | no-hosing in the *same row* |
+
+The last two are what separate the effects. On the warming page, reading down a
+column shows the CO₂ response growing; reading *across* a row shows whether that
+response depends on the AMOC state — which is the interaction. The AMOC page is
+the same idea transposed. Reference panels (the 1×CO₂ row, the 0 Sv column) are
+zero by construction and stay in place labeled as such, so every page in the
+book keeps the same 3×3 skeleton and panels never move.
+
+The two effects differ by roughly a factor of ten for some fields, so each page
+computes its own symmetric scale rather than sharing one that would flatten the
+smaller effect.
+
+**Page order is always alphabetical by variable**, whatever order they were
+requested in, with each variable's absolute and anomaly pages kept adjacent. The
+pairing is never split, so a book stays navigable as fields are added — the
+sorting lives in `workflows.steady_state.book_pages`, so future workflows that
+reuse it inherit the same rule.
+
+**Contours** are drawn on every page at the colorbar's own labeled values
+(`plotting.tick_levels` feeds both, so a line always sits on a labeled value).
+On absolute pages they cover the whole panel and no statistics are involved — a
+contour there is just an isoline, and the zero level is kept because a field like
+`SHFLX` genuinely crosses zero. On the three difference pages the zero level is
+dropped (it would trace a sign change, not a magnitude) and the lines are clipped
+to significant regions.
+
+**Significance** is a Welch t-test on the 50 annual values at each grid point,
+Benjamini-Hochberg controlled by default (testing ~14k points at α = 0.05 would
+otherwise yield ~700 false positives). It is shown as **black contours over a
+color field that covers the whole map** — nothing is masked or stippled away:
+
+- `--significance-style field` (default) contours the anomaly at **the
+  colorbar's own labeled values**, drawn only where the difference is
+  significant. Contour levels and colorbar ticks come from one shared array
+  (`plotting.tick_levels`), so a line always sits exactly on a labeled value.
+  Zero is excluded — a zero contour traces a sign change rather than a
+  magnitude. Negative contours are dashed, so sign reads without the color.
+- `--significance-style outline` instead traces the boundary of significant
+  regions, saying where the signal is trustworthy but nothing about its size.
+
+Anomaly color limits are the 98th percentile of |anomaly|, not the maximum, so a
+few extreme polar cells don't wash out the pattern; the colorbar carries extend
+arrows showing values run past both ends.
+
+### The pair-comparison book
+
+A narrower page for four cases only, paired by the AMOC state they end in rather
+than by hosing level. Hosing is the knob; the AMOC is what it turns, and CO₂
+turns it too — so the same hosing level means a different AMOC state at
+different CO₂.
+
+```bash
+setsid nohup ./.venv/bin/python scripts/make_pair_compare_book.py \
+  --name pair_compare_book --by-letter --resume \
+  < /dev/null > data/output/pair_build.log 2>&1 &
+```
+
+|            | vigorous AMOC          | AMOC shut down            | vigorous − shut down |
+|------------|------------------------|---------------------------|----------------------|
+| **1×CO₂**  | `picontrol` (0 Sv)     | `1xCO2_hosing_FIX` (+0.3) | AMOC effect at 1×CO₂ |
+| **4×CO₂**  | `4xCO2_neghos` (−0.3)  | `4xCO2_noh` (0 Sv)        | AMOC effect at 4×CO₂ |
+| **4× − 1×**| warming, AMOC vigorous | warming, AMOC shut down   | *(colorbars)*        |
+
+Both rows are a 0.3 Sv contrast, placed differently on the hosing axis: at 1×CO₂
+no hosing is already vigorous and +0.3 Sv shuts it down; at 4×CO₂ the warming has
+done part of the job, so no hosing *is* the shut-down case and −0.3 Sv is needed
+to keep it vigorous. So column 3 is the AMOC effect at fixed CO₂, and row 3 is
+the CO₂ effect at *matched* AMOC state.
+
+The bottom-right cell holds both colorbars rather than the interaction term. That
+term would be a difference of differences over pairs sitting at different points
+on the hosing axis, so it would not mean what its position on the grid implies.
+Four panels are absolute and share a sequential scale; four are differences and
+share a diverging one.
+
+**The row-1 pairing is unconfirmed.** Subpolar North Atlantic temperature
+(45–70 °N, 300–360 °E) over the steady-state window differs by −5.5 K across the
+4×CO₂ pair, a convincing shutdown signature, but only −2.0 K across the 1×CO₂
+pair. That is consistent with the salinity evidence that the `_FIX` hosing runs
+freshen the subpolar Atlantic far less than the runs they replaced, and it may
+mean `1xCO2_hosing_FIX` is weakened rather than genuinely collapsed. Settling it
+needs AMOC time series, which the archive does not yet carry for these runs —
+the only MOC data on disk is the 5-year NAHosMIP_v2 delivery, which contains
+neither `picontrol` nor the `noh` runs. If it turns out to be weakened, swap that
+one entry in `pair_compare.PAIRS` and rebuild.
+
+### Units are asserted, not assumed
+
+`variables.py` is the authority on units because file metadata is not reliable —
+`RHREFHT` is labeled `fraction` but holds percent, and all `PREC*` rates are m/s.
+Each variable carries an expected range *and* an expected global mean, both
+asserted after scaling. Two checks are needed: dividing RH by 100 leaves every
+value inside a valid 0–130 % range, and only the mean reveals the error. All 39
+variables pass their own checks on the real data.
+
+## Ocean fields: regridding POP to the CAM grid
+
+Sea-surface salinity arrives on the POP displaced-pole ocean grid (gx1v6, 384×320
+curvilinear, monthly), not the 144×96 CAM grid that every atmospheric field uses.
+`src/amoc_cesm/regrid.py` bins it onto the CAM grid so the two can be differenced
+and plotted together. Nothing in it is specific to salinity — `regrid_pop_file`
+takes any POP variable name, so the same code handles SST, mixed-layer depth or
+any other 2-D ocean field extracted the same way.
+
+```bash
+python scripts/regrid_salt.py              # all cases
+python scripts/regrid_salt.py 4xCO2_poshos # just one
+```
+
+writes, per case, a monthly and an annual-mean file to
+`data/output/regrid/SSS/<case>_SSS_{mon,ann}_144x96.nc` (6.6 GB of POP input
+becomes ~390 MB).
+
+### Method
+
+First-order **area-weighted binning**: each POP T-cell is assigned whole to the
+CAM cell containing its centre and averaged with `TAREA` weights. The
+area-weighted global ocean mean is preserved to float32 round-off (checked at
+1e-8 g/kg), and total ocean area is preserved exactly.
+
+What it is *not* is exact conservative remapping — a POP cell straddling a CAM
+edge is counted entirely on one side. Doing better needs the POP cell corners
+(`ULAT`/`ULONG`), which these extracted files don't carry. The penalty is small
+because POP gx1v6 (~1°, finer near the equator and in the Arctic) is about four
+times finer than CAM f19: the median CAM cell averages 8 POP cells, the largest
+24. A handful of coastal cells contain only one POP cell and are correspondingly
+noisy — `regrid.source_cell_counts()` maps this.
+
+Land is handled by the weighting, not by a mask: each CAM value is the mean over
+the *ocean part* of that cell, and cells with no ocean are NaN. The ocean area
+that went into each cell is written alongside as `ocean_area` (m²), and it — not
+cos(lat) — is the correct weight for area-averaging the result, because it
+accounts for the land fraction of coastal cells.
+
+```python
+x = load_sss("4xCO2_poshos")                       # annual; freq="mon" for monthly
+x.SALT.weighted(x.ocean_area.fillna(0)).mean(("lat", "lon"))
+```
+
+### Two time conventions to know about
+
+POP stamps each monthly mean with the **end** of its averaging interval, so the
+January 2051 mean carries the time `2051-02-01`. Grouping that axis by
+`.dt.year` would push every December into the following year. The regridder
+replaces the time coordinate with the midpoint of `time_bound`, so each stamp
+falls inside its own month. Annual means are then length-of-month weighted, and
+only whole 12-month years are kept.
+
+Ocean `picontrol` runs to **2155**, five years longer than the atmospheric
+`picontrol`.
+
+### The +0.3 Sv hosing cases exist twice
+
+Each hosing experiment was delivered as both a `NAHosMIP_FIX` run and a `yr200`
+run. **These are not the same run truncated differently** — they diverge from
+the first month. The `FIX` runs are canonical and take the plain `*_poshos`
+names in `SALT_SOURCES`; the `yr200` runs are kept as `*_poshos_yr200` so the
+two can be compared.
+
+They behave very differently. Subpolar North Atlantic mean SSS (50–65 °N,
+300–350 °E), 1×CO₂ hosing:
+
+| year | `1xCO2_poshos` (FIX) | `1xCO2_poshos_yr200` |
+|------|----------------------|----------------------|
+| 2051 | 34.64                | 34.52                |
+| 2075 | 34.59                | 31.92                |
+| 2100 | 34.28                | 30.74                |
+| 2150 | 33.95                | *(ends 2100)*        |
+
+The `yr200` run freshens by ~4 g/kg in 50 years; the `FIX` run drifts by ~0.7 in
+100, and at 4×CO₂ its subpolar salinity is nearly indistinguishable from the
+unhosed `4xCO2_noh` run. Whatever `FIX` denotes, the two runs are not
+interchangeable, and any hosing signal computed from the `FIX` runs will be much
+weaker than from the `yr200` runs.
+
+### Coverage
+
+Unlike the atmospheric fields, the ocean cases do **not** share a common window.
+Canonical cases run 2051–2150 except `2xCO2_poshos` (to 2130) and
+`4xCO2_poshos` (to 2120), so `ANALYSIS_YEARS = 2052–2150` does not apply; the
+window common to all nine is 2052–2120.
+
+### End-of-run SSS maps
+
+```bash
+python scripts/make_sss_maps.py [n_years]     # default 10
+```
+
+writes `data/output/sss_end_of_run_last10yr.pdf` (and PNGs under
+`data/output/figures/sss_end_of_run/`): the 3×3 absolute field, the same grid as
+an anomaly against `picontrol`, and a page putting the `FIX` and `yr200` hosing
+runs side by side.
+
+Each simulation is averaged over **its own last ten years**, not over a shared
+window — the ocean runs end at four different years, so a fixed window would
+either discard the end of the long runs or run past the end of the short ones.
+Every panel therefore prints its own averaging window and the full span of the
+run beneath it (`2111–2120 of 2051–2120 (70 yr)`), and the FIX − yr200 column
+names both windows because it differences two different points in time.
+
+Panel means are weighted by `ocean_area`, not cos(lat), and land is the axes
+background showing through the NaN holes in the mesh rather than a drawn
+feature. `grid_3x3` grew three optional hooks for this — `footnotes`, `mean_fn`,
+`nan_face` — which the atmospheric pages don't pass and are unaffected by.
+
+## The NAHosMIP_v2 protocol (`data/input/postproc`)
+
+A second, richer delivery of the six **hosed** runs (no `noh`, no `picontrol`):
+39 atmospheric, 14 land, 11 sea-ice and 11 ocean variables, each as an annual
+*and* a seasonal mean — but only for model years **2051–2055**. It complements
+`SALT_extracted` (100 years, surface salinity only) rather than replacing it.
+7.1 GB, of which `ocn/SALT` (full 60-level) is 5.1 GB.
+
+```bash
+python scripts/extract_postproc.py [case ...]
+```
+
+writes per case and frequency:
+
+```
+data/output/postproc_v2/sss/<case>_SSS_<freq>_144x96.nc
+data/output/postproc_v2/transports/<case>_transports_<freq>.nc
+```
+
+`postproc.py` keys these six on `*_v2` labels (`1xCO2_poshos_v2`, …). The suffix
+is not cosmetic: their 2051 salinity field matches **neither** the
+`NAHosMIP_FIX` nor the `yr200` delivery of the same nominal experiment (RMS
+0.108 and 0.112 g/kg against the two, where zero would mean identical), so these
+are a *third* set of integrations.
+
+### Surface salinity
+
+`regrid_sss` reuses the same POP→CAM binning as the SSS extracts. The one
+difference is that these files carry `TLAT`/`TLONG` but neither `TAREA` nor
+`KMT`, so the grid is read from a file that has all four — gx1v6 is the same
+grid in every run, which is what `regrid.pop_grid()` is for.
+
+### MOC and the northward transports
+
+`transports` turns `MOC`, `N_HEAT` and `N_SALT` into something selectable.
+The raw files index region and component by integer, with the meanings held in
+separate byte-string variables; here they become string coordinates and depth
+becomes metres:
+
+```python
+from amoc_cesm.postproc import load_transports
+t = load_transports("1xCO2_poshos_v2")
+atl = t.transport_reg.values[1]                    # "Atlantic Ocean + ... + Hudson Bay"
+t.MOC.sel(transport_reg=atl).sum("moc_comp")       # streamfunction, Sv, (time, moc_z, lat)
+t.N_HEAT.sel(transport_reg=atl, transport_comp="Total")   # PW, (time, lat_aux_grid)
+```
+
+Three scalar AMOC indices are computed alongside, all from the Atlantic
+streamfunction below 500 m:
+
+| variable | definition |
+|---|---|
+| `amoc_max` | max over 20–60 °N, **all three** overturning components summed |
+| `amoc_rapid_26n` | same but at 26.5 °N, the RAPID array latitude |
+| `amoc_max_eulerian` | max over 20–60 °N, **Eulerian mean only** |
+
+`amoc_max_eulerian` is the definition behind the `verification/*_amoc_index.csv`
+files shipped with the delivery, and reproduces all six of them to float32
+precision — which is how the extraction is checked. It runs ~0.15 Sv *below*
+`amoc_max`: the bolus and submesoscale parameterisations oppose the mean flow.
+Note `N_SALT` keeps POP's raw `gram centimeter^3/kg/s`; it is not converted.
+
+### Two traps in these files
+
+**The annual means are December–November years, not calendar years.** CESM
+stamps a monthly mean with the *end* of its interval, so `cdo selyear,2051/2055`
+picks up December 2050 through November 2051 as "2051"; every annual record
+spans day 334 to day 334. This is not new — the `Annual_Mean_2D_Fileds_ATMs`
+files use the same convention, so the two are directly comparable — but neither
+is a calendar year. The exception is the **first ocean record**, an 11-month
+January–November 2051 mean, because the ocean archive has no December 2050. It
+is flagged as a `partial_year` coordinate on the output rather than described in
+a comment, so time averages can drop it deliberately.
+
+**The `case` global attribute is wrong.** Every file inherits
+`case = "B1850CN_f19g16_GCC_piCtrl300yr"` from the branch parent. `source_case`
+carries the real identity. Anything keying off `case` will label all six runs as
+the control.
+
+## Usage
+
+```python
+import sys; sys.path.insert(0, "src")
+from amoc_cesm import get_case, load_var, global_mean, climatology
+from amoc_cesm.io import load_ensemble
+
+# one case, last 50 years
+case = get_case(co2=4, hosing=-0.3)
+print(float(global_mean(climatology(load_var(case, "LHFLX"), years=slice(2101, 2150)))))
+
+# every available case stacked on a `case` dimension, with co2/hosing coords
+ens = load_ensemble("FLUT", years=slice(2052, 2150))
+print(global_mean(ens).mean("year"))
+
+# regridded ocean salinity, on the same 144x96 grid as the fields above
+from amoc_cesm.regrid import load_sss
+sss = load_sss("4xCO2_poshos")                    # freq="mon" for monthly
+print(float(sss.SALT.sel(year=slice(2101, 2120)).mean("year")
+            .weighted(sss.ocean_area.fillna(0)).mean(("lat", "lon"))))
+```

@@ -683,3 +683,9 @@ A parallel **monthly** (per-calendar-month) path —
 field on the annual indices and projects the monthly scenario changes, writing
 `(month, param, lat, lon)` NetCDFs and rasterized all-months PDFs (`--vector` for
 vector output).
+
+## Legacy CESM1 code
+
+`src/amoc_cesm/` and its scripts come from the former `amoc-cesm` repository
+(CESM1 CO₂ × hosing factorial); the data they target is outmoded. See
+[`src/amoc_cesm/README.md`](src/amoc_cesm/README.md).
