@@ -1,31 +1,42 @@
-"""Predicted decadal-mean field changes for 3 K of warming with and without AMOC decline.
+"""Predicted decadal-mean field changes on a warming x AMOC-decline grid.
 
 Uses the decadal (10-year block-mean) pooled regressions in
-``data/output/regression/<predictand>/decadal10/`` to map the predicted change in
-the gridded tas, prc (convective precip), and pr (total precip) fields relative to
-a control baseline, for set 5 (Tglob + AMOC) and set 10 (Tglob + AMOC +
-Tglob*AMOC interaction).
+``data/output/regression/<predictand>/decadal10/`` to map predicted changes in the
+gridded tas, prc (convective precip), and pr (total precip) fields, for set 5
+(Tglob + AMOC) and set 10 (Tglob + AMOC + Tglob*AMOC interaction).
 
 Addresses: where does an AMOC decline exacerbate vs. ameliorate the response to
-global warming? Three (Tglob, AMOC) states:
+global warming? Four (Tglob, AMOC) states form a 2 x 2 factorial:
 
-    baseline   : Tglob = T0,       AMOC = 20 Sv
-    warm       : Tglob = T0 + 3 K, AMOC = 20 Sv  (warming, AMOC unchanged)
-    warm-weak  : Tglob = T0 + 3 K, AMOC =  6 Sv  (warming, AMOC 20 -> 6 Sv)
+    reference  : Tglob = T0,       AMOC = 20 Sv
+    weak       : Tglob = T0,       AMOC =  6 Sv
+    warm       : Tglob = T0 + 3 K, AMOC = 20 Sv
+    warm-weak  : Tglob = T0 + 3 K, AMOC =  6 Sv
 
 T0 is the 1xCO2 control's global-mean tas over its AMOC-present years (the years
-it contributes to the pooled fit). Global-mean warming is the same 3 K in both
-warm states, so warm-weak - warm is the AMOC-decline effect at fixed global-mean
-temperature: a pure spatial redistribution in tas (global mean ~0), though not
-necessarily in precipitation. Both warm states sit inside the sampled predictor
-space: 4xCO2_m03Sv (~291.5 K, ~20 Sv) and 4xCO2_p03Sv (~290.4 K, ~5.5 Sv) are
-close neighbours, so these are interpolations, not extrapolations.
+it contributes to the pooled fit). Each page is a 3 x 3 grid: the corners are the
+four states' changes from the reference, and each edge is the difference of its
+two neighbouring corners:
 
-The predicted change between two conditions is coef . (predictor(X) - predictor(R));
+    [0,0] reference (= 0)    [0,1] AMOC effect at +0 K   [0,2] weak - reference
+    [1,0] warming at 20 Sv   [1,1] interaction (set 10)  [1,2] warming at 6 Sv
+    [2,0] warm - reference   [2,1] AMOC effect at +3 K   [2,2] warm-weak - reference
+
+The centre is the interaction, [2,1] - [0,1] (= [1,2] - [1,0]): how much the AMOC
+effect changes with 3 K of warming. It is identically zero for the additive set 5,
+so set 5 leaves it blank. Global-mean tas is held fixed along each row, so the AMOC
+effects are pure spatial redistributions of tas (global mean ~0), though not of
+precipitation. All four states sit inside the sampled predictor space (between
+the 1x-4xCO2 runs at ~20 Sv and the +0.3 Sv runs at ~5.5 Sv), so these are
+interpolations, not extrapolations.
+
+The predicted change between two states is coef . (predictor(X) - predictor(R));
 the intercept cancels. Set 5 uses raw predictors; set 10 uses the centered columns
 (q_Tglob, q_AMOC, q_Tglob.AMOC), evaluated with the pooled centering means read
 from the coef file's ``centering_mean_*`` attributes, with the interaction term
-formed per condition.
+formed per state. All panels for a predictand, in both sets, share one symmetric
+color scale, so set 5 and set 10 compare directly. One single-page PDF per
+predictand and set: ``data/output/scenarios/predicted_change_<predictand>_set<N>.pdf``.
 
     python scripts/predict_scenarios.py
 """
@@ -35,13 +46,12 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
 
 import data_loader as dl
 import regression as reg
-from output import PROJECTION, PdfBook, plot_coefficient_map
+from output import plot_map_grid, symmetric_bound
 
 REG_BASE = os.path.join(dl._REPO_ROOT, "data", "output", "regression")
 OUT_DIR = os.path.join(dl._REPO_ROOT, "data", "output", "scenarios")
@@ -50,34 +60,32 @@ BASELINE_CASE = "1xCO2"
 WARMING_K = 3.0
 AMOC_STRONG_SV = 20.0
 AMOC_WEAK_SV = 6.0
-
-# Columns to map: (title, condition X, reference R).
-SCENARIOS = [
-    (f"+{WARMING_K:g} K, AMOC {AMOC_STRONG_SV:g} Sv − baseline", "warm", "baseline"),
-    (f"+{WARMING_K:g} K, AMOC {AMOC_WEAK_SV:g} Sv − baseline", "warm-weak", "baseline"),
-    (f"AMOC {AMOC_STRONG_SV:g}→{AMOC_WEAK_SV:g} Sv effect at +{WARMING_K:g} K", "warm-weak", "warm"),
-]
-
-# Page layout. A column is either an int (an absolute map of SCENARIOS[i]) or a
-# tuple (title, numerator_idx, denominator_idx) giving a percentage ratio
-# 100 * change(num) / change(den). Page 1 = the three changes; page 2 = the AMOC
-# effect as a percentage of the warming-only change -- the fractional increase(+)
-# or decrease(-) in the warming response caused by the AMOC decline.
-PAGES = [
-    (f"{WARMING_K:g} K warming with / without AMOC {AMOC_STRONG_SV:g}→{AMOC_WEAK_SV:g} Sv",
-     [0, 1, 2]),
-    ("AMOC-decline effect as % of the warming-only change",
-     [("AMOC effect ÷ warming-only change", 2, 0)]),
-]
-
-# The page-2 ratio explodes where the warming-only change crosses zero; fix every
-# ratio panel to a common +/-100% scale (values beyond saturate).
-RATIO_PCT_BOUND = 100.0
+PREDICTAND_NAMES = ["tas", "prc", "pr"]
 
 SET_FILES = {
     5: "coef_set5_Tglob-AMOC.nc",
     10: "coef_set10_Tglob-AMOC-TglobxAMOC.nc",
 }
+
+WARM = f"+{WARMING_K:g} K"
+AMOC_DROP = f"AMOC {AMOC_STRONG_SV:g}→{AMOC_WEAK_SV:g} Sv"
+
+# Corners of the 3 x 3 grid: (row, col) -> (panel title, state). Each corner maps
+# that state's predicted change from the reference.
+CORNERS = {
+    (0, 0): (f"+0 K, {AMOC_STRONG_SV:g} Sv (reference)", "reference"),
+    (0, 2): (f"+0 K, {AMOC_WEAK_SV:g} Sv − reference", "weak"),
+    (2, 0): (f"{WARM}, {AMOC_STRONG_SV:g} Sv − reference", "warm"),
+    (2, 2): (f"{WARM}, {AMOC_WEAK_SV:g} Sv − reference", "warm-weak"),
+}
+# Edges: (row, col) -> (panel title, minuend cell, subtrahend cell).
+EDGES = {
+    (0, 1): (f"{AMOC_DROP} effect at +0 K", (0, 2), (0, 0)),
+    (2, 1): (f"{AMOC_DROP} effect at {WARM}", (2, 2), (2, 0)),
+    (1, 0): (f"{WARM} warming effect at {AMOC_STRONG_SV:g} Sv", (2, 0), (0, 0)),
+    (1, 2): (f"{WARM} warming effect at {AMOC_WEAK_SV:g} Sv", (2, 2), (0, 2)),
+}
+CENTER_TITLE = f"interaction: AMOC effect at {WARM} − at +0 K"
 
 
 def baseline_tglob():
@@ -90,20 +98,22 @@ def baseline_tglob():
     return float(scal["tas_global_mean"].sel(year=valid).mean())
 
 
-def conditions():
-    """(Tglob [K], AMOC [Sv]) per condition."""
+def states():
+    """(Tglob [K], AMOC [Sv]) per state."""
     t0 = baseline_tglob()
     return {
-        "baseline": (t0, AMOC_STRONG_SV),
+        "reference": (t0, AMOC_STRONG_SV),
+        "weak": (t0, AMOC_WEAK_SV),
         "warm": (t0 + WARMING_K, AMOC_STRONG_SV),
         "warm-weak": (t0 + WARMING_K, AMOC_WEAK_SV),
     }
 
 
-def predicted_change(coef, set_num, condX, condR, cond, mT, mA):
-    """Predicted field change coef . (predictor(X) - predictor(R)) for a set."""
-    Tx, Ax = cond[condX]
-    Tr, Ar = cond[condR]
+def predicted_change(coef, set_num, state_x, state_r, mT, mA):
+    """Predicted field change coef . (predictor(X) - predictor(R)) for a set;
+    ``state_x`` and ``state_r`` are (Tglob, AMOC) pairs."""
+    Tx, Ax = state_x
+    Tr, Ar = state_r
     if set_num == 5:  # raw predictors
         return (coef.sel(param="tas_global_mean") * (Tx - Tr)
                 + coef.sel(param="amoc_strength") * (Ax - Ar))
@@ -115,66 +125,52 @@ def predicted_change(coef, set_num, condX, condR, cond, mT, mA):
             + coef.sel(param="q_Tglob.AMOC") * (qx[2] - qr[2]))
 
 
-def run_for_predictand(name, cond):
+def grid_panels(coef, set_num, state, mT, mA):
+    """The 3 x 3 grid for one set: (row, col) -> (panel title, change field)."""
+    fields = {cell: predicted_change(coef, set_num, state[s], state["reference"], mT, mA)
+              for cell, (_, s) in CORNERS.items()}
+    fields.update({cell: fields[a] - fields[b] for cell, (_, a, b) in EDGES.items()})
+    titles = {cell: spec[0] for cell, spec in {**CORNERS, **EDGES}.items()}
+    if set_num == 10:
+        fields[1, 1] = fields[2, 1] - fields[0, 1]
+        titles[1, 1] = CENTER_TITLE
+    return {cell: (titles[cell], fields[cell]) for cell in fields}
+
+
+def run_for_predictand(name, state):
     predictand = reg.PREDICTANDS[name]
     units, cmap = predictand["units"], predictand["cmap"]
-    sets = sorted(SET_FILES)
-    dsets = {
-        s: xr.open_dataset(os.path.join(REG_BASE, name, "decadal10", SET_FILES[s]))
-        for s in sets
-    }
-    coefs = {s: dsets[s]["coef"] for s in sets}
+    dsets = {s: xr.open_dataset(os.path.join(REG_BASE, name, "decadal10", f))
+             for s, f in SET_FILES.items()}
     mT = float(dsets[10].attrs["centering_mean_Tglob_K"])
     mA = float(dsets[10].attrs["centering_mean_AMOC_Sv"])
     print(f"[{name}] set-10 centering: Tglob={mT:.3f} K, AMOC={mA:.3f} Sv")
 
-    out_path = os.path.join(OUT_DIR, f"predicted_change_{name}.pdf")
-    with PdfBook(out_path) as pdf:
-        for page_title, cols in PAGES:
-            fig, axes = plt.subplots(
-                len(sets), len(cols),
-                figsize=(5.2 * len(cols), 3.4 * len(sets)),
-                squeeze=False, subplot_kw={"projection": PROJECTION},
-            )
-            for i, set_num in enumerate(sets):
-                coef = coefs[set_num]
-                for j, col in enumerate(cols):
-                    if isinstance(col, tuple):  # ratio column: (title, num_idx, den_idx)
-                        title, ni, di = col
-                        num = predicted_change(coef, set_num, SCENARIOS[ni][1], SCENARIOS[ni][2], cond, mT, mA)
-                        den = predicted_change(coef, set_num, SCENARIOS[di][1], SCENARIOS[di][2], cond, mT, mA)
-                        with np.errstate(divide="ignore", invalid="ignore"):
-                            ratio = 100.0 * num / den
-                        change = ratio.where(np.isfinite(ratio))
-                        u, bnd = "% of warming-only change", RATIO_PCT_BOUND
-                    else:  # absolute map of SCENARIOS[col]
-                        title, condX, condR = SCENARIOS[col]
-                        change = predicted_change(coef, set_num, condX, condR, cond, mT, mA)
-                        u, bnd = f"Δ{name} ({units})", None
-                        print(f"[{name}] set {set_num}: {title}: global mean "
-                              f"{float(dl.global_mean(change)):.4g} {units}")
-                    plot_coefficient_map(
-                        change, xr.zeros_like(change),  # zeros -> no stippling
-                        title=f"set {set_num}: {title}", units=u,
-                        ax=axes[i, j], cmap=cmap, bound=bnd,
-                    )
-            fig.suptitle(
-                f"Predicted decadal-mean {name} change (decadal10 regressions)\n"
-                f"{page_title}", fontsize=12,
-            )
-            fig.tight_layout(rect=(0, 0, 1, 0.96))
-            pdf.savefig(fig, dpi=300, bbox_inches="tight")
-            plt.close(fig)
-    print(f"wrote {out_path}  ({len(PAGES)} pages)")
+    panels = {s: grid_panels(dsets[s]["coef"], s, state, mT, mA) for s in SET_FILES}
+    bound = symmetric_bound(np.concatenate(
+        [field.values.ravel() for grid in panels.values() for _, field in grid.values()]))
+    for set_num, grid in panels.items():
+        for cell, (title, field) in sorted(grid.items()):
+            print(f"[{name}] set {set_num} {cell}: {title}: global mean "
+                  f"{float(dl.global_mean(field)):.4g} {units}")
+        out_path = os.path.join(OUT_DIR, f"predicted_change_{name}_set{set_num}.pdf")
+        plot_map_grid(
+            grid, (3, 3),
+            title=(f"Predicted decadal-mean Δ{name}, set {set_num} "
+                   f"({'Tglob + AMOC' if set_num == 5 else 'Tglob + AMOC + Tglob·AMOC'}); "
+                   f"rows: warming, columns: AMOC decline"),
+            units=f"Δ{name} ({units})", cmap=cmap, bound=bound, out_path=out_path,
+        )
+        print(f"wrote {out_path}")
 
 
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
-    cond = conditions()
-    for label, (t, a) in cond.items():
+    state = states()
+    for label, (t, a) in state.items():
         print(f"{label:10s}: Tglob={t:.3f} K, AMOC={a:.2f} Sv")
-    for name in ("tas", "prc", "pr"):
-        run_for_predictand(name, cond)
+    for name in PREDICTAND_NAMES:
+        run_for_predictand(name, state)
 
 
 if __name__ == "__main__":

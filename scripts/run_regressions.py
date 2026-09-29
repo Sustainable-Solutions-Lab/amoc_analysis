@@ -1,14 +1,16 @@
 """Pooled per-grid-point regressions of gridded tas on scalar indices.
 
-Builds one pooled sample (years with all predictors present, across the nine CESM1
+Builds one pooled sample (years with all predictors present, across the nine CESM1.2
 simulations), then for each selected predictor set fits a per-grid-point OLS and
-writes the coefficient fields (NetCDF) to ``data/output/regression/<predictand>/``
-and stippled coefficient maps to one PDF book per set, with one page per
-predictand, in ``data/output/regression/[decadal10/]``. By default only sets 5 & 10 are run (pass
+writes the coefficient fields (NetCDF) and a PDF book of stippled coefficient
+maps, one page per set (``coef_maps.pdf``), to
+``data/output/regression/<predictand>/[decadal10/]``. By default only sets 5 & 10 are run (pass
 ``--all-sets`` for all ten) and only the decadal10 smoothing (pass ``--do-annuals``
-to also run the annual variant).
+to also run the annual variant). ``--variables`` picks the predictands: a set name
+from ``data_loader.VARIABLE_SETS`` (``minimal`` = tas, pr; ``key``; ``all``,
+the default) and/or individual variable names.
 
-    python scripts/run_regressions.py [--all-sets] [--do-annuals]
+    python scripts/run_regressions.py [--all-sets] [--do-annuals] [--variables minimal]
 """
 
 import argparse
@@ -20,17 +22,17 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import data_loader as dl
 import regression as reg
-from output import PdfBook, plot_set
+from matplotlib.backends.backend_pdf import PdfPages
+
+from output import plot_set
 
 OUT_BASE = os.path.join(dl._REPO_ROOT, "data", "output", "regression")
 
 # Predictands to analyze: every loader variable (each writes its NetCDF to its own
 # subdirectory and one page per set book).
-PREDICTAND_NAMES = list(reg.PREDICTANDS)
-
 CAVEATS = """Regression outputs: pooled per-grid-point OLS of a gridded predictand.
 
-- Model: CESM1 (B1850CN, f19g16) NAHosMIP runs, a 3x3 matrix of CO2 level
+- Model: CESM1.2 (B1850CN, f19g16) NAHosMIP runs, a 3x3 matrix of CO2 level
   (1x, 2x, 4x) x North Atlantic hosing (-0.3, 0, +0.3 Sv); case names
   [124]xCO2[_m03Sv|_p03Sv].
 - One regression per grid cell; the years of all nine runs are POOLED into a
@@ -60,9 +62,9 @@ def set_labels(set_def):
     return "-".join(reg.PREDICTORS[p]["tag"] for p in set_def["predictors"])
 
 
-def run_for_predictand(name, smoothing, all_sets, books):
+def run_for_predictand(name, smoothing, all_sets):
     """Fit every selected set for predictand ``name``; write each fit's NetCDF and
-    add its maps as a page of ``books[set number]`` (an open ``PdfBook``)."""
+    its maps as one page of the predictand's book, ``coef_maps.pdf``."""
     predictand = reg.PREDICTANDS[name]
     tag = smoothing["tag"]
     out_dir = os.path.join(OUT_BASE, name, smoothing["subdir"])
@@ -77,6 +79,8 @@ def run_for_predictand(name, smoothing, all_sets, books):
     print(f"[{name}/{tag}] VIF (3-predictor union):", {k: round(v, 2) for k, v in vif.items()})
 
     run_label = f"predictand={name}; smoothing={tag}; pooled: " + ", ".join(reg.RUNS)
+    book_path = os.path.join(out_dir, "coef_maps.pdf")
+    book = PdfPages(book_path)
     for set_def in reg.select_predictor_sets(all_sets):
         names = set_def["predictors"]
         fit = reg.fit_grid_ols(predictors[names], response)
@@ -94,12 +98,15 @@ def run_for_predictand(name, smoothing, all_sets, books):
 
         labels = set_labels(set_def)
         nc = os.path.join(out_dir, f"coef_set{set_def['number']}_{labels}.nc")
-        plot_set(fit, set_def, run_label, books[set_def["number"]], predictand, centering)
+        plot_set(fit, set_def, run_label, book, predictand, centering)
         fit.to_netcdf(nc)
         print(
             f"[{name}/{tag}] set {set_def['number']} ({labels}): nobs={fit.attrs['nobs']} "
             f"-> {os.path.relpath(nc, OUT_BASE)}"
         )
+
+    book.close()
+    print(f"[{name}/{tag}] wrote {os.path.relpath(book_path, OUT_BASE)}")
 
     with open(os.path.join(out_dir, "README.txt"), "w") as f:
         f.write(CAVEATS)
@@ -115,23 +122,18 @@ def main():
         "--do-annuals", action="store_true",
         help="also run the annual (interannual) variant (default: decadal10 only)",
     )
+    parser.add_argument(
+        "--variables", nargs="+", default=["all"], choices=list(dl.VARIABLE_SETS),
+        metavar="NAME",
+        help="predictands: set names (minimal, key, all) and/or variable names "
+             "(default: all)",
+    )
     args = parser.parse_args()
-    set_defs = reg.select_predictor_sets(args.all_sets)
+    predictand_names = dl.resolve_variables(args.variables)
     for smoothing in reg.select_smoothings(args.do_annuals):
-        book_dir = os.path.join(OUT_BASE, smoothing["subdir"])
-        os.makedirs(book_dir, exist_ok=True)
-        book_paths = {
-            s["number"]: os.path.join(book_dir, f"coef_set{s['number']}_{set_labels(s)}.pdf")
-            for s in set_defs
-        }
-        books = {number: PdfBook(path) for number, path in book_paths.items()}
-        for name in PREDICTAND_NAMES:
-            run_for_predictand(name, smoothing, args.all_sets, books)
-        for number, book in books.items():
-            book.close()
-            print(f"wrote book {os.path.relpath(book_paths[number], OUT_BASE)} "
-                  f"({len(PREDICTAND_NAMES)} pages, one per predictand)")
-    print(f"\nDone. Books in {OUT_BASE}/[decadal10/]; NetCDF in {OUT_BASE}/<predictand>/[decadal10/]")
+        for name in predictand_names:
+            run_for_predictand(name, smoothing, args.all_sets)
+    print(f"\nDone. Books and NetCDF in {OUT_BASE}/<predictand>/[decadal10/]")
 
 
 if __name__ == "__main__":

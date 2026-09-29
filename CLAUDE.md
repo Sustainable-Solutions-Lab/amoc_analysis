@@ -2,13 +2,13 @@
 
 ## Project Goal
 This project performs statistical analysis — primarily linear regression — on
-climate model output from the **CESM1** model (NAHosMIP 3×3 CO₂ × hosing runs), focused on the Atlantic
+climate model output from the **CESM1.2** model (NAHosMIP 3×3 CO₂ × hosing runs), focused on the Atlantic
 Meridional Overturning Circulation (AMOC) and its relationships to other climate
 variables and forcings.
 
 Typical tasks:
 
-1. **Extract diagnostics** from CESM1 NetCDF output (AMOC strength, North
+1. **Extract diagnostics** from CESM1.2 NetCDF output (AMOC strength, North
    Atlantic temperature/salinity, surface fluxes, etc.)
 2. **Regress** AMOC and related quantities against other variables and time to
    characterize trends and sensitivities.
@@ -67,13 +67,13 @@ rather than hiding them.
 - All imports at the top of the file — no imports inside functions or scattered
   throughout the code.
 - Source code belongs in `src/` with clear module responsibilities, e.g.:
-  - `data_loader.py` — read CESM1 NetCDF, select variables, apply averaging
+  - `data_loader.py` — read CESM1.2 NetCDF, select variables, apply averaging
   - `regression.py` — OLS / linear-regression fitting and inference
   - `output.py` — results tables and plots
 - Scripts belong in `scripts/` and should be thin wrappers around src modules.
 
 ### Protected Directories
-- **Never modify files in `./data/input/`** — this directory contains CESM1
+- **Never modify files in `./data/input/`** — this directory contains CESM1.2
   reference data that must remain unchanged.
 - Generated results, tables, and figures go in `./data/output/` (git-ignored).
 
@@ -98,7 +98,7 @@ rather than hiding them.
   `inventory.py`, `make_pair_compare_book.py`, `make_sss_maps.py`,
   `make_steady_state_book.py`, `regrid_salt.py`) were merged in from the former
   `amoc-cesm` repository (CESM1 CO₂ × hosing factorial). The data they were
-  written against is outmoded; only the CESM1 NAHosMIP data in `data/input/` used
+  written against is outmoded; only the CESM1.2 NAHosMIP data in `data/input/` used
   by the rest of this repository is current. See `src/amoc_cesm/README.md` for its original docs.
 
 ## Version Control
@@ -109,9 +109,9 @@ rather than hiding them.
 
 ## Plotting Conventions
 - **File format**: Save figures as PDF. Use
-  `fig.savefig(path, dpi=300, bbox_inches='tight')`. Build multi-page PDFs with
-  `output.PdfBook`, never matplotlib's `PdfPages`: `PdfPages` holds every page in
-  memory until it is closed (a 46-page map book reached ~13 GB).
+  `fig.savefig(path, dpi=300, bbox_inches='tight')`. Keep PDF books to one per
+  variable (a few pages each): matplotlib's `PdfPages` holds every page in memory
+  until it is closed, and a 46-page map book reached ~13 GB.
 - **Regression plots**: Show the data (scatter or line), the fitted line, and a
   shaded confidence band; report slope ± standard error and the relevant
   statistic (R², p-value) in the legend or annotation.
@@ -123,7 +123,9 @@ rather than hiding them.
 - **Map projection**: Use the Equal Earth projection for all maps by default
   (following UN guidance): `ccrs.EqualEarth()`, available as
   `output.PROJECTION`. Draw gridded data with `transform=ccrs.PlateCarree()`
-  (`output.DATA_CRS`), and draw coastlines with `output.draw_coastlines(ax)`
+  (`output.DATA_CRS`) — for filled fields use `output.draw_field(ax, da, ...)`,
+  which projects the cells itself (Cartopy's own `pcolormesh(transform=...)` is
+  ~100× slower) — and draw coastlines with `output.draw_coastlines(ax)`
   (Natural Earth 110m coastline simplified to 1°, keeping vector PDFs small)
   rather than `ax.coastlines()`. Example:
   ```python

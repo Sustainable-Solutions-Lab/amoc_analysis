@@ -1,6 +1,6 @@
 """EOF / principal-component analysis of pooled gridded fields (additive path).
 
-For each predictand (tas, prc, and 2-run total pr): compute area-weighted covariance EOFs of the
+For each predictand (tas, prc, pr): compute area-weighted covariance EOFs of the
 grand-mean anomalies over the pooled AMOC-complete sample, plot the leading EOF
 patterns, plot the principal-component (EOF weighting) time series per simulation,
 and regress the leading PCs (>=95% variance) on each selected predictor set, saving
@@ -18,12 +18,12 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
+from matplotlib.backends.backend_pdf import PdfPages
 
 import data_loader as dl
 import eof
 import regression as reg
 from output import (
-    PdfBook,
     plot_eof_patterns,
     plot_pc_prediction,
     plot_pc_regression,
@@ -106,7 +106,7 @@ def run_for_predictand(name, smoothing, all_sets):
     decadal = smoothing["block"] is not None  # the focus variant gets figures
     var_frac = eof_ds["variance_fraction"].values
     # One multi-page PDF collects every set's regression figure (one page per set).
-    reg_pdf = PdfBook(os.path.join(out_dir, "pc_regression.pdf")) if decadal else None
+    reg_pdf = PdfPages(os.path.join(out_dir, "pc_regression.pdf")) if decadal else None
     fits = {}
     for set_def in reg.select_predictor_sets(all_sets):
         num = set_def["number"]
@@ -131,7 +131,7 @@ def run_for_predictand(name, smoothing, all_sets):
     # default sets-5-&-10 run renders only set 10 here, --all-sets renders 6, 9, 10).
     if decadal:
         reg_pdf.close()
-        with PdfBook(os.path.join(out_dir, "pc_prediction.pdf")) as pred_pdf:
+        with PdfPages(os.path.join(out_dir, "pc_prediction.pdf")) as pred_pdf:
             for num in (n for n in (6, 9, 10) if n in fits):
                 pc_fit, names = fits[num]
                 plot_pc_prediction(

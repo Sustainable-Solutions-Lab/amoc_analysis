@@ -55,7 +55,7 @@ CAVEATS = """ITCZ regressions: pooled OLS of a scalar ITCZ-latitude response.
   decadal samples with far more trustworthy degrees of freedom (at lower n).
 - Coefficient units are deg latitude per predictor unit (Tglob, dT_NS in K;
   AMOC in Sv).
-- The precip-centroid source is CONVECTIVE prc uniformly for all runs.
+- The precip-centroid source is TOTAL precipitation pr (CAM PRECT) for all runs.
 """
 
 

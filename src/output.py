@@ -10,7 +10,6 @@ import matplotlib
 
 matplotlib.use("Agg")
 import functools
-import io
 
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
@@ -19,7 +18,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import shapely
 from matplotlib.lines import Line2D
-from pypdf import PdfReader, PdfWriter
 from scipy import stats
 
 import data_loader as dl
@@ -56,11 +54,33 @@ def centered_lon(da):
     """``da`` with longitude relabeled to [-180, 180) and sorted, for mapping.
 
     The CAM grid runs 0..357.5 E, so drawn as is its wrap point lands on the
-    central meridian of the Greenwich-centered map projection, where Cartopy's
-    pcolormesh leaves a thin unfilled stripe at 0 deg. Relabeled, the wrap point
-    moves to +/-180 deg, the map's outer edge.
+    central meridian of the Greenwich-centered map projection, leaving a thin
+    unfilled stripe at 0 deg. Relabeled, the wrap point moves to +/-180 deg, the
+    map's outer edge. ``draw_field`` applies it; contour and stippling calls on a
+    map need it too.
     """
     return da.assign_coords(lon=(da["lon"] + 180) % 360 - 180).sortby("lon")
+
+
+def draw_field(ax, da, **kwargs):
+    """``pcolormesh`` of a ``(lat, lon)`` field on map ``ax``, returning the mesh.
+
+    The cell corners are projected here, once, and drawn in the map's own
+    coordinates. Cartopy's ``pcolormesh(transform=...)`` does the same job but
+    spends ~1.3 s per call checking for cells that wrap around the map edge,
+    which made a 9-panel page take ~12 s. So that no cell straddles the edge,
+    longitudes are relabeled to [-180, 180), the -180 column is repeated at +180,
+    and the outer cell edges are clipped to +/-180 deg lon and +/-90 deg lat.
+    ``kwargs`` go to ``pcolormesh`` (``cmap``, ``vmin``, ``vmax``, ``rasterized``).
+    """
+    da = centered_lon(da)
+    lon, lat = da["lon"].values, da["lat"].values
+    values = np.concatenate([da.values, da.values[:, :1]], axis=1)
+    lon_edges = np.concatenate([[-180.0], (lon[1:] + lon[:-1]) / 2,
+                                [lon[-1] + (lon[-1] - lon[-2]) / 2, 180.0]])
+    lat_edges = np.concatenate([[-90.0], (lat[1:] + lat[:-1]) / 2, [90.0]])
+    corners = ax.projection.transform_points(DATA_CRS, *np.meshgrid(lon_edges, lat_edges))
+    return ax.pcolormesh(corners[..., 0], corners[..., 1], values, shading="flat", **kwargs)
 
 # Line-plot convention for cases: CO2 level sets the line style (1x solid,
 # 2x dashed, 4x dotted) and hosing sets the color (-0.3 Sv red, 0 black,
@@ -96,52 +116,21 @@ SCALAR_AXIS_LABELS = {
 }
 
 
-def _symmetric_bound(values):
+def symmetric_bound(values):
     """Robust symmetric color bound: the 99th percentile of |values| (NaN-safe)."""
     return float(np.nanpercentile(np.abs(values), 99))
 
 
-class PdfBook:
-    """Multi-page PDF, written one standalone page at a time.
-
-    Drop-in for matplotlib's ``PdfPages`` (``savefig``, ``close``, context
-    manager). ``PdfPages`` keeps every page's images and path templates in memory
-    until ``close()`` -- ~0.3 GB per coefficient-map page here, so a 46-page book
-    reached ~13 GB. Each page is instead rendered to its own in-memory PDF, which
-    releases matplotlib's state, and the compressed pages are concatenated with
-    pypdf.
-    """
-
-    def __init__(self, path):
-        self.path = path
-        self._writer = PdfWriter()
-
-    def savefig(self, fig, **kwargs):
-        page = io.BytesIO()
-        fig.savefig(page, format="pdf", **kwargs)
-        self._writer.append(PdfReader(page))
-
-    def close(self):
-        with open(self.path, "wb") as f:
-            self._writer.write(f)
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc_info):
-        self.close()
-
-
-def _save_figure(fig, out_path=None, pdf=None):
+def _save_figure(fig, out_path=None, pdf=None, dpi=300):
     """Write ``fig`` as a standalone PDF (``out_path``) or one page of ``pdf``.
 
-    ``pdf`` is a ``PdfBook`` handle; when given,
+    ``pdf`` is a ``matplotlib.backends.backend_pdf.PdfPages`` handle; when given,
     the figure is appended as a page (so many figures collect into one file).
     """
     if pdf is not None:
-        pdf.savefig(fig, dpi=300, bbox_inches="tight")
+        pdf.savefig(fig, dpi=dpi, bbox_inches="tight")
     else:
-        fig.savefig(out_path, dpi=300, bbox_inches="tight")
+        fig.savefig(out_path, dpi=dpi, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -158,11 +147,8 @@ def plot_coefficient_map(coef, pvalue, title, units, ax, cmap="RdBu_r", bound=No
     """
     coef, pvalue = centered_lon(coef), centered_lon(pvalue)
     lon, lat = coef["lon"], coef["lat"]
-    b = bound if bound is not None else _symmetric_bound(coef.values)
-    mesh = ax.pcolormesh(
-        lon, lat, coef, cmap=cmap, vmin=-b, vmax=b,
-        shading="auto", transform=DATA_CRS, rasterized=rasterized,
-    )
+    b = bound if bound is not None else symmetric_bound(coef.values)
+    mesh = draw_field(ax, coef, cmap=cmap, vmin=-b, vmax=b, rasterized=rasterized)
     # Stipple where NOT significant (p > 0.05).
     ax.contourf(
         lon,
@@ -185,7 +171,7 @@ def plot_coefficient_map(coef, pvalue, title, units, ax, cmap="RdBu_r", bound=No
 
 def plot_set(fit, set_def, run_label, pdf, predictand, centering=None):
     """Render all predictor coefficient maps for one regression set as one page of
-    ``pdf`` (a ``PdfBook``, so several predictands collect into one file).
+    ``pdf`` (an open ``PdfPages`` book, one page per set).
 
     One panel per predictor (the intercept is omitted). Stippling marks p > 0.05.
     ``predictand`` is a ``regression.PREDICTANDS`` entry (label + units), used for
@@ -257,10 +243,9 @@ def plot_eof_patterns(eof_ds, title, units, out_path, cmap="RdBu_r", max_pattern
     fig = plt.figure(figsize=(6.0 * ncols, 3.4 * nrows))
     for i in range(n_plot):
         ax = fig.add_subplot(nrows, ncols, i + 1, projection=PROJECTION)
-        e = centered_lon(eofs.isel(mode=i))
-        bound = _symmetric_bound(e.values)
-        mesh = ax.pcolormesh(e["lon"], e["lat"], e, cmap=cmap, vmin=-bound,
-                             vmax=bound, shading="auto", transform=DATA_CRS)
+        e = eofs.isel(mode=i)
+        bound = symmetric_bound(e.values)
+        mesh = draw_field(ax, e, cmap=cmap, vmin=-bound, vmax=bound)
         draw_coastlines(ax)
         ax.set_global()
         ax.set_title(f"EOF {i + 1}  ({var[i] * 100:.1f}% var)", fontsize=10)
@@ -722,7 +707,7 @@ def plot_tglob_vs_amoc(annual, decadal, out_path):
     ax.set_xlabel("global-mean near-surface air temperature, tas (K)")
     ax.set_ylabel("AMOC strength at 26.5°N (Sv)")
     ax.set_title(
-        "CESM1 AMOC vs global-mean temperature, 2051–2150\n"
+        "CESM1.2 AMOC vs global-mean temperature, 2051–2150\n"
         "bold: 10-year block means (○ = first decade); thin: annual means",
         fontsize=10,
     )
@@ -744,6 +729,12 @@ CASE_GRID_PAGES = [
 ]
 
 
+# Resolution of the rasterized case-grid map fields (text and coastlines stay
+# vector). The nine small panels need no more, and PdfPages holds every page's
+# images until the book closes: at 300 dpi a 4-page book peaked at ~5 GB.
+CASE_GRID_RASTER_DPI = 150
+
+
 def plot_case_grid_page(field, title, cmap, vmin, vmax, pdf, rasterized):
     """One page of ``pdf``: a 3 x 3 map grid of ``field`` (``(co2, hosing, lat,
     lon)``, laid out like ``data_loader.CASE_GRID``) on a shared color scale.
@@ -759,11 +750,9 @@ def plot_case_grid_page(field, title, cmap, vmin, vmax, pdf, rasterized):
     units = field.attrs["units"]
     for i, co2 in enumerate(dl.CO2_LEVELS):
         for j, hosing in enumerate(dl.HOSING_LEVELS):
-            ax, panel = axes[i, j], centered_lon(field.sel(co2=co2, hosing=hosing))
-            mesh = ax.pcolormesh(
-                panel["lon"], panel["lat"], panel, cmap=cmap, vmin=vmin, vmax=vmax,
-                shading="auto", transform=DATA_CRS, rasterized=rasterized,
-            )
+            ax, panel = axes[i, j], field.sel(co2=co2, hosing=hosing)
+            mesh = draw_field(ax, panel, cmap=cmap, vmin=vmin, vmax=vmax,
+                              rasterized=rasterized)
             draw_coastlines(ax)
             ax.set_global()
             ax.set_title(f"{dl.CASE_GRID[i][j]}   global mean = "
@@ -772,7 +761,35 @@ def plot_case_grid_page(field, title, cmap, vmin, vmax, pdf, rasterized):
                         pad=0.02, aspect=40)
     cbar.set_label(f"{field.name} ({units})")
     fig.suptitle(title, fontsize=12)
-    _save_figure(fig, pdf=pdf)
+    _save_figure(fig, pdf=pdf, dpi=CASE_GRID_RASTER_DPI)
+
+
+def plot_map_grid(panels, shape, title, units, cmap, bound, out_path):
+    """One-page PDF of maps on a ``shape`` (rows, cols) grid sharing one color scale.
+
+    ``panels`` maps ``(row, col)`` to ``(panel title, (lat, lon) DataArray)``;
+    grid cells not in ``panels`` are left blank. The symmetric scale is
+    ±``bound`` (white = 0). Each panel title ends with its area-weighted global
+    mean. Map fields are rasterized at ``CASE_GRID_RASTER_DPI``; text and
+    coastlines stay vector.
+    """
+    fig, axes = plt.subplots(*shape, figsize=(5.0 * shape[1], 3.2 * shape[0]),
+                             subplot_kw={"projection": PROJECTION}, layout="constrained")
+    for ax in axes.flat:
+        ax.set_visible(False)
+    for (i, j), (panel_title, field) in panels.items():
+        ax = axes[i, j]
+        ax.set_visible(True)
+        mesh = draw_field(ax, field, cmap=cmap, vmin=-bound, vmax=bound, rasterized=True)
+        draw_coastlines(ax)
+        ax.set_global()
+        ax.set_title(f"{panel_title}\nglobal mean = {float(dl.global_mean(field)):+.3f} {units}",
+                     fontsize=9)
+    cbar = fig.colorbar(mesh, ax=axes, orientation="horizontal", shrink=0.5,
+                        pad=0.02, aspect=40)
+    cbar.set_label(units)
+    fig.suptitle(title, fontsize=12)
+    _save_figure(fig, out_path=out_path, dpi=CASE_GRID_RASTER_DPI)
 
 
 def plot_case_grid_book(grid, pdf, rasterized):
@@ -785,7 +802,7 @@ def plot_case_grid_book(grid, pdf, rasterized):
     fluxes (``data_loader.WATER_FLUX_UNITS``), else ``RdBu_r``.
     """
     header = (f"{grid.name}: {grid.attrs['long_name']} ({grid.attrs['units']}), "
-              f"CESM1 mean {grid.attrs['time_mean']}")
+              f"CESM1.2 mean {grid.attrs['time_mean']}")
     diverging = "RdBu" if grid.attrs["units"] == dl.WATER_FLUX_UNITS else "RdBu_r"
     (raw_label, _), *difference_pages = CASE_GRID_PAGES
     low, high = np.nanpercentile(grid.values, [1, 99])
@@ -793,6 +810,6 @@ def plot_case_grid_book(grid, pdf, rasterized):
                         pdf, rasterized)
     for label, transform in difference_pages:
         field = transform(grid).assign_attrs(grid.attrs).rename(grid.name)
-        bound = _symmetric_bound(field.values)
+        bound = symmetric_bound(field.values)
         plot_case_grid_page(field, f"{header}\n{label}", diverging, -bound, bound,
                             pdf, rasterized)

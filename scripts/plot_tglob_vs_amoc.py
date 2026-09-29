@@ -1,4 +1,4 @@
-"""x-y line plot of AMOC strength vs global-mean tas for the nine CESM1 cases.
+"""x-y line plot of AMOC strength vs global-mean tas for the nine CESM1.2 cases.
 
 Uses each case's AMOC years (2051-2150): thin lines through the annual means and
 bold lines through the 10-year block means, with the project's case line

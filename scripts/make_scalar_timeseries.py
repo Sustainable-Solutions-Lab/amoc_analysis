@@ -42,11 +42,11 @@ TAS_METADATA = {
 # The centroid integrates over both branches of a double ITCZ, so it varies
 # continuously (unlike the argmax, which jumps between the two branches).
 ITCZ_BANDS = [20.0, 30.0]
-PRECIP_VAR = "prc"  # convective precipitation (CAM PRECC)
+PRECIP_VAR = "pr"  # total precipitation (CAM PRECT)
 PRECIP_NOTE = (
     "ITCZ proxy = area- and precip-weighted mean latitude (precipitation-mass "
     "centroid) of the zonal-mean precip within the band. Precip source is "
-    "convective prc (CAM PRECC) for all runs."
+    "total pr (CAM PRECT) for all runs."
 )
 
 
@@ -69,7 +69,7 @@ def main():
             da.attrs = {**TAS_METADATA[da.name], "source_file": tas.attrs["source_file"]}
             data_vars[da.name] = da
 
-        # ITCZ centroid(s) from the gridded annual convective precipitation
+        # ITCZ centroid(s) from the gridded annual total precipitation
         # (shares the run's year axis, so it slots into the same Dataset).
         precip = dl.load_annual_field(experiment, PRECIP_VAR)
         for band in ITCZ_BANDS:
