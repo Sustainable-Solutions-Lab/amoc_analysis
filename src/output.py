@@ -110,17 +110,26 @@ def case_line_style(case):
             "linestyle": CO2_LINESTYLE[spec["co2_multiple"]]}
 
 
-# Scatter-marker convention: CO2 level sets the (filled) marker shape -- 1x circle,
+# Scatter-marker convention: CO2 level sets the marker shape -- 1x circle,
 # 2x triangle, 4x square; hosing sets the color, as for lines. The triangle has the
 # least ink at a given size, so the least-emphasized 2xCO2 level draws least attention.
+# Markers are filled when each case contributes at most FILLED_MARKER_MAX_POINTS
+# points (e.g. 10 decadal means) and open when it contributes more (e.g. ~100
+# annual values), so dense clouds of overlapping points stay readable.
 CO2_MARKER = {1: "o", 2: "^", 4: "s"}
+FILLED_MARKER_MAX_POINTS = 10
 
 
-def case_marker_style(case):
-    """``ax.scatter`` kwargs for a case's points: marker by CO2, color by hosing."""
+def case_marker_style(case, points_per_case):
+    """``ax.scatter`` kwargs for a case's ``points_per_case`` points: marker shape by
+    CO2, color by hosing, filled or open per ``FILLED_MARKER_MAX_POINTS``."""
     spec = dl.EXPERIMENTS[case]
     color = HOSING_COLOR[spec["hosing_sv"]]
-    return {"marker": CO2_MARKER[spec["co2_multiple"]], "color": color}
+    filled = points_per_case <= FILLED_MARKER_MAX_POINTS
+    return {"marker": CO2_MARKER[spec["co2_multiple"]],
+            "facecolors": color if filled else "none",
+            "edgecolors": "none" if filled else color,
+            "linewidths": 0.7}
 
 # Axis labels for the scalar predictors (used by the scatter plot).
 SCALAR_AXIS_LABELS = {
@@ -469,8 +478,8 @@ def plot_predictor_scatter(predictors, out_path):
         x, y = predictors[xv].values, predictors[yv].values
         for run in runs:
             m = run_of == run
-            ax.scatter(x[m], y[m], s=14, alpha=0.7, edgecolors="none", label=run,
-                       **case_marker_style(run))
+            ax.scatter(x[m], y[m], s=14, alpha=0.7, label=run,
+                       **case_marker_style(run, m.sum()))
         r = float(np.corrcoef(x, y)[0, 1])
         ax.set_xlabel(SCALAR_AXIS_LABELS[xv])
         ax.set_ylabel(SCALAR_AXIS_LABELS[yv])
@@ -545,8 +554,8 @@ def plot_itcz_predicted_vs_observed(observed, run_of, panels, title, out_path=No
         lim = (lo - pad, hi + pad)
         for run in runs:
             m = run_of == run
-            ax.scatter(observed[m], pred[m], s=14, alpha=0.7, edgecolors="none",
-                       label=run, **case_marker_style(run))
+            ax.scatter(observed[m], pred[m], s=14, alpha=0.7,
+                       label=run, **case_marker_style(run, m.sum()))
         ax.plot(lim, lim, color="k", lw=1.0, ls="--")
         ax.set_xlim(lim)
         ax.set_ylim(lim)
@@ -620,8 +629,8 @@ def plot_itcz_scatter(predictors, response, fits, single_vars, title, out_path=N
         x = predictors[var].values
         for run in runs:
             m = run_of == run
-            ax.scatter(x[m], y[m], s=14, alpha=0.7, edgecolors="none", label=run,
-                       **case_marker_style(run))
+            ax.scatter(x[m], y[m], s=14, alpha=0.7, label=run,
+                       **case_marker_style(run, m.sum()))
 
         fit = fits[var]
         b0 = float(fit["coef"].sel(param="intercept"))

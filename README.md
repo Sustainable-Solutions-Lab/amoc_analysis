@@ -358,7 +358,9 @@ wetter or moister is blue (`regression.WET_IS_BLUE`). All other fields use
 **Case styling.** Every figure that distinguishes cases uses one convention. Hosing
 sets the color: −0.3, 0, +0.3 Sv = red, black, blue. CO₂ sets the line style (1×,
 2×, 4× = solid, dashed, dotted; `output.case_line_style`) or, in scatter plots, the
-filled marker (circle, triangle, square; `output.case_marker_style`).
+marker (circle, triangle, square; `output.case_marker_style`). Scatter markers are
+filled when each simulation contributes ≤ 10 points (e.g. decadal means) and open
+outlines when it contributes more (e.g. ~100 annual values).
 
 **Drawing maps.** Gridded fields are drawn with `output.draw_field`, which projects
 the cell corners itself. Cartopy's `pcolormesh(transform=…)` spent ~1.3 s per map
@@ -375,8 +377,6 @@ Flat in `data/output/regression/`, with a shared caveats `README.txt`:
   predictor set (`set5`, `set10`, …; `regression.set_group`). Read a set with
   `xr.open_dataset(path, group="set10")`; set 10's group attributes carry the
   centering means for its centered (`q_`) terms.
-- `<var>_ratio.{pdf,nc}` — the set-5 warming / AMOC-slowdown response ratio
-  (`scripts/plot_warming_amoc_ratio.py`).
 - `scripts/plot_predictor_scatter.py`, `scripts/plot_scalar_timeseries.py` and
   `scripts/plot_tglob_vs_amoc.py` write the predictor scatter, time-series and
   AMOC-vs-Tglob plots to `data/output/regression/`.
@@ -676,7 +676,6 @@ python scripts/run_regressions.py          # data/output/regression/<var>_coef.{
 python scripts/plot_predictor_scatter.py   # data/output/regression/predictor_scatter.pdf
 python scripts/plot_scalar_timeseries.py   # data/output/regression/predictor_timeseries.pdf
 python scripts/plot_tglob_vs_amoc.py       # data/output/regression/tglob_vs_amoc.pdf (AMOC vs Tglob, 9 cases)
-python scripts/plot_warming_amoc_ratio.py  # data/output/regression/<var>_ratio.{pdf,nc}
 python scripts/plot_case_grid_book.py      # data/output/case_grid/<var>_2101-2150.pdf (3x3 case maps, one book per variable)
 python scripts/run_eof_regressions.py      # data/output/eof/<var>_pc.{pdf,nc}
 python scripts/predict_scenarios.py        # data/output/scenarios/<var>_scenarios.pdf
@@ -690,11 +689,10 @@ on decadal means; add `--all-sets` to produce all ten sets. `predict_scenarios.p
 uses sets 5 & 10, so it needs only the default run.
 
 **Variable sets (`--variables`).** Every script that makes per-variable output --
-`run_regressions.py`, `plot_warming_amoc_ratio.py`, `plot_case_grid_book.py`,
-`run_eof_regressions.py`, `predict_scenarios.py` -- takes `--variables` with one or
+`run_regressions.py`, `plot_case_grid_book.py`, `run_eof_regressions.py`,
+`predict_scenarios.py` -- takes `--variables` with one or
 more named sets (`data_loader.VARIABLE_SETS`) and/or variable names, default `all`.
-`plot_warming_amoc_ratio.py`, `run_eof_regressions.py` and `predict_scenarios.py`
-read the matching `run_regressions.py` output, so run that with the same set first.
+`run_eof_regressions.py` and `predict_scenarios.py` read the matching `run_regressions.py` output, so run that with the same set first.
 The ITCZ scripts work on the scalar precipitation-centroid latitude, not per-variable
 fields, so they have no `--variables`.
 
@@ -711,7 +709,7 @@ python scripts/plot_case_grid_book.py --variables key SHFLX   # sets and names m
 
 Every output is per variable, so a subset run simply rewrites that subset's files
 and leaves the others alone. A full run of everything on all 46
-variables takes roughly 25–30 minutes, mostly figure rendering (the fits take ~1 s
+variables takes roughly 20 minutes, mostly figure rendering (the fits take ~1 s
 per variable), with peak memory under 2 GB.
 
 Each script is a thin wrapper over `src/` and prints what it writes. All outputs

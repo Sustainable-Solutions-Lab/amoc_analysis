@@ -53,8 +53,6 @@ CAVEATS = """Regression outputs: pooled per-grid-point OLS of decadal-mean gridd
       tstat, pvalue on (param, lat, lon) and r2 on (lat, lon); set 10's group
       attributes give the centering means to subtract before applying its
       centered (q_) terms. Read with xr.open_dataset(path, group="set10").
-    * <var>_ratio.{pdf,nc} (scripts/plot_warming_amoc_ratio.py) -- the set-5
-      warming response / AMOC-slowdown response ratio, in Sv/K.
 - Predictands: every variable in data_loader.VARIABLES (all CAM fields in the
   input files plus derived fields such as pr_minus_evap); each variable's units
   and definition are in its NetCDF attributes. 'prc' is CONVECTIVE precipitation

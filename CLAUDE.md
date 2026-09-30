@@ -147,10 +147,13 @@ rather than hiding them.
   blue. Use `output.case_line_style(case)` (constants `output.CO2_LINESTYLE`,
   `output.HOSING_COLOR`).
 - **Scatter plots of cases**: hosing sets the color exactly as for lines
-  (−0.3, 0, +0.3 Sv = red, black, blue); CO₂ level sets the filled marker shape:
+  (−0.3, 0, +0.3 Sv = red, black, blue); CO₂ level sets the marker shape:
   1×, 2×, 4×CO₂ = circle, triangle, square (the triangle, least prominent, marks the
-  least-emphasized 2×CO₂ level). Use `output.case_marker_style(case)`
-  (constant `output.CO2_MARKER`). Every figure that distinguishes cases uses these
+  least-emphasized 2×CO₂ level). Markers are **filled** when each simulation
+  contributes ≤ 10 points (e.g. decadal means) and **unfilled** (open outlines)
+  when it contributes more (e.g. ~100 annual values). Use
+  `output.case_marker_style(case, points_per_case)`, which applies the rule
+  (constants `output.CO2_MARKER`, `output.FILLED_MARKER_MAX_POINTS`). Every figure that distinguishes cases uses these
   two conventions — never a generic color cycle.
 - **Units and labels**: Always label axes with variable name and units; state the
   time range and any spatial averaging in the title or caption.

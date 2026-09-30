@@ -2,8 +2,9 @@
 
 Four panels in one PDF: AMOC strength and interhemispheric tas difference vs
 global-mean tas (top row), then global-mean tas and interhemispheric tas
-difference vs AMOC strength (bottom row). Uses the same pooled, AMOC-complete
-500-row sample as the regressions.
+difference vs AMOC strength (bottom row). Uses the pooled annual sample of
+AMOC-present years (100 per simulation, 900 in all), so markers are open
+(``output.case_marker_style``).
 
     python scripts/plot_predictor_scatter.py
 """
