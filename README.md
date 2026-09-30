@@ -368,11 +368,15 @@ in memory until the book is closed.
 
 **Outputs.**
 
-- Each predictand has **one PDF book**, `coef_maps.pdf`, with one page per
-  predictor set, next to its NetCDFs in `data/output/regression/<predictand>/[decadal10/]`
-  (the annual variant, with `--do-annuals`, in `<predictand>/`).
-- The coefficient/SE/t/p/R² fields are one NetCDF per predictand and set in the
-  same directory, with a caveats `README.txt`.
+Flat in `data/output/regression/`, with a shared caveats `README.txt`:
+
+- `<var>_coef.pdf` — one PDF book per predictand, one page per predictor set.
+- `<var>_coef.nc` — the coefficient/SE/t/p/R² fields, one NetCDF group per
+  predictor set (`set5`, `set10`, …; `regression.set_group`). Read a set with
+  `xr.open_dataset(path, group="set10")`; set 10's group attributes carry the
+  centering means for its centered (`q_`) terms.
+- `<var>_ratio.{pdf,nc}` — the set-5 warming / AMOC-slowdown response ratio
+  (`scripts/plot_warming_amoc_ratio.py`).
 - `scripts/plot_predictor_scatter.py`, `scripts/plot_scalar_timeseries.py` and
   `scripts/plot_tglob_vs_amoc.py` write the predictor scatter, time-series and
   AMOC-vs-Tglob plots to `data/output/regression/`.
@@ -389,7 +393,7 @@ Tglob, so in any set containing Tglob the global mean of the `tas`-on-Tglob
 coefficient is exactly 1. Every other `tas` coefficient then has an area-mean of
 exactly 0, which also makes its NH and SH means equal and opposite.
 
-### Results: CESM1.2, decadal10, sets 5 & 10
+### Results: CESM1.2, decadal means, sets 5 & 10
 
 Pooled n = 90 decadal blocks (10 per run); df = 87 for set 5 and 86 for set 10.
 In the table, "global" is the area-weighted global mean of the coefficient map.
@@ -444,14 +448,14 @@ subpolar North Atlantic is +0.35 K Sv⁻¹), and area-mean R² rises only slight
   p < 0.05) over a quarter to half of the globe. Its magnitude is small, however,
   so the additive set 5 already captures most of the response.
 
-### Slow-timescale (decadal) variant
+### Decadal means
 
-`run_regressions.py` (and the EOF script below) produces a **decadal** variant by
-default, to characterize variability slower than interannual. The annual variant
-is opt-in via `--do-annuals`. The low-pass is **non-overlapping 10-year block
-means** (`data_loader.block_average_on_years`). It is applied **per run, per
+Every regression analysis (gridded, EOF, ITCZ, scenarios) uses **decadal means**,
+to characterize variability slower than interannual. The low-pass is
+**non-overlapping 10-year block means** (`regression.DECADAL_BLOCK`,
+`data_loader.block_average_on_years`). It is applied **per run, per
 contiguous segment, to both the predictors and the predictand** inside
-`regression.build_pooled(block=10)`, *before* pooling. The same filter therefore
+`regression.build_pooled(block=regression.DECADAL_BLOCK)`, *before* pooling. The same filter therefore
 acts on the dependent and independent variables, and every downstream step (the
 orthogonalized and quadratic columns, the grid OLS, the EOFs) inherits it. Blocks
 never span a run boundary or a gap within a run. Each block's timestamp is its
@@ -460,11 +464,10 @@ segment of exactly ten blocks.
 
 Block averaging is a **decimation**, not a running mean. It collapses each decade
 to one roughly independent sample (pooled **n = 90**, 10 per run), so the nominal
-OLS degrees of freedom become honest. This resolves the autocorrelation caveat of
-the annual variant, at the cost of sample size. Quadratic and product terms are
+OLS degrees of freedom are far more honest than with annual data (successive
+decades of a run still drift together, so p-values remain somewhat optimistic). Quadratic and product terms are
 formed from the *filtered* bases (filter, then square), which gives the genuinely
-low-frequency response surface. Decadal results go to the `decadal10/` subdirectories. The annual outputs
-(produced only with `--do-annuals`) use the same filenames one level up.
+low-frequency response surface.
 
 ### EOF / principal-component analysis (additive path)
 
@@ -497,9 +500,9 @@ Method (`src/eof.py`):
 Outputs are flat in `data/output/eof/`, two files per variable plus a shared
 caveats `README.txt`:
 
-- `<var>_pc.nc` — OLS of the PCs on every predictor set fit, in raw PC units:
-  `coef_set<N>`, `se_set<N>`, `tstat_set<N>`, `pvalue_set<N>` on
-  `(param_set<N>, mode)` and `r2_set<N>` on `mode`.
+- `<var>_pc.nc` — OLS of the PCs on every predictor set fit, in raw PC units, one
+  NetCDF group per set (`set5`, `set10`, …): `coef`, `se`, `tstat`, `pvalue` on
+  `(param, mode)` and `r2` on `mode`.
 - `<var>_pc.pdf`, in page order:
   1. the leading EOF spatial patterns + a variance scree;
   2. the PC-on-scalar regression — the EOF analog of the 2D coefficient maps, with
@@ -578,8 +581,8 @@ between two states is `coef · (predictor(X) − predictor(R))`; the intercept c
 and set 10 evaluates its centered columns and interaction with the fit's centering
 means.
 
-Outputs: `data/output/scenarios/predicted_change_<predictand>_set{5,10}.pdf`, one page
-each. All panels for a predictand, **in both sets**, share one symmetric color scale
+Outputs: `data/output/scenarios/<predictand>_scenarios.pdf`, one page per set
+(5, then 10). All panels for a predictand, **in both sets**, share one symmetric color scale
 (99th percentile of |change|), so set 5 and set 10 compare directly. Each panel title
 gives its area-weighted global mean.
 
@@ -611,32 +614,25 @@ Regional means use the boxes of the regression results above:
 precipitation-mass centroid latitude, for two tropical bands
 (`precip_centroid_lat_20`, `precip_centroid_lat_30`) — on the same scalar indices
 (Tglob, dT_NS, AMOC), using the same predictor sets (5 & 10 by default, all ten with
-`--all-sets`) and the same decadal10 pooling (annual via `--do-annuals`) as the
-gridded regressions. Because the response is a single series per simulation-year
+`--all-sets`) and the same decadal-mean pooling as the gridded regressions. Because the response is a single series per simulation-year
 (not a gridded field or PCs), it uses `regression.build_pooled_scalar` and
 `regression.fit_scalar_ols` (a 1-D OLS with the same normal-equations math as the
 gridded fit, validated against `statsmodels`, plus 95 % confidence intervals). The
 pooled common sample is the same AMOC-complete 900 years (90 decadal blocks).
-Outputs go to `data/output/itcz/{band20,band30}/[decadal10/]`:
+Outputs are flat in `data/output/itcz/`, one pair per band (`band20`, `band30`),
+with a shared caveats `README.txt`:
 
-- `coef_table_{annual,decadal10}.csv` — coef, SE, t, p, 95 % CI per parameter,
-  with R² and n, for every set (the scalar analog of the gridded coefficient maps).
-- `itcz_fit_set{1..10}_{labels}.nc` — the per-set fit Datasets.
-- `itcz_timeseries.pdf` — the centroid latitude per simulation, annual + decadal
-  overlay (`scripts/plot_itcz_regressions.py`; band level only).
-- `itcz_scatter.pdf` — ITCZ latitude vs each single predictor with the OLS line,
-  95 % CI band, and slope ± SE / R² / p annotated.
-- `itcz_predicted_vs_observed.pdf` — predicted vs observed centroid latitude for
-  the multi-predictor sets (5 & 10 by default; 5, 6, 10 with `--all-sets`), with the
-  1:1 line and R² (shows how well the *joint* regression reproduces the ITCZ across
-  runs).
-- `itcz_coefficients.pdf` — partial-slope (coef ± SE) bar charts for the same sets,
-  blue/red by sign and hatched where not significant.
-
-The three regression figures (`itcz_scatter`, `itcz_predicted_vs_observed`,
-`itcz_coefficients`) are written for the decadal10 sample (in the `decadal10/`
-subdir) by default; `--do-annuals` additionally writes them for the annual sample
-(in the band directory). The `itcz_timeseries.pdf` overview is always written.
+- `<band>_coef_table.csv` — coef, SE, t, p, 95 % CI per parameter, with R² and n,
+  for every set (the scalar analog of the gridded coefficient maps).
+- `<band>_itcz.pdf` (`scripts/plot_itcz_regressions.py`), in page order:
+  1. the centroid latitude per simulation, annual with the decadal means overlaid;
+  2. ITCZ latitude vs each single predictor with the OLS line, 95 % CI band, and
+     slope ± SE / R² / p annotated;
+  3. predicted vs observed centroid latitude for the multi-predictor sets (5 & 10
+     by default; 5, 6, 10 with `--all-sets`), with the 1:1 line and R² (shows how
+     well the *joint* regression reproduces the ITCZ across runs);
+  4. partial-slope (coef ± SE) bar charts for the same sets, blue/red by sign and
+     hatched where not significant.
 
 **Results (CESM1.2; total-`pr` centroid).** R² by predictor set, band20 /
 band30:
@@ -676,24 +672,22 @@ dependencies, run, in order:
 
 ```bash
 python scripts/make_scalar_timeseries.py   # data/processed/scalars_annual_CESM1_*.nc
-python scripts/run_regressions.py          # data/output/regression/<predictand>/[decadal10/]coef_maps.pdf, coef_set*.nc
+python scripts/run_regressions.py          # data/output/regression/<var>_coef.{pdf,nc}
 python scripts/plot_predictor_scatter.py   # data/output/regression/predictor_scatter.pdf
 python scripts/plot_scalar_timeseries.py   # data/output/regression/predictor_timeseries.pdf
 python scripts/plot_tglob_vs_amoc.py       # data/output/regression/tglob_vs_amoc.pdf (AMOC vs Tglob, 9 cases)
-python scripts/plot_warming_amoc_ratio.py  # data/output/regression/<predictand>/decadal10/ratio_warming_over_slowdown_set5.pdf
+python scripts/plot_warming_amoc_ratio.py  # data/output/regression/<var>_ratio.{pdf,nc}
 python scripts/plot_case_grid_book.py      # data/output/case_grid/<var>_2101-2150.pdf (3x3 case maps, one book per variable)
 python scripts/run_eof_regressions.py      # data/output/eof/<var>_pc.{pdf,nc}
-python scripts/predict_scenarios.py        # data/output/scenarios/predicted_change_<predictand>_set{5,10}.pdf
-python scripts/run_itcz_regressions.py     # data/output/itcz/{band20,band30}/[decadal10/]coef_table_*.csv, itcz_fit_set*.nc
-python scripts/plot_itcz_regressions.py    # data/output/itcz/{band20,band30}/{itcz_timeseries,itcz_scatter}.pdf
+python scripts/predict_scenarios.py        # data/output/scenarios/<var>_scenarios.pdf
+python scripts/run_itcz_regressions.py     # data/output/itcz/<band>_coef_table.csv
+python scripts/plot_itcz_regressions.py    # data/output/itcz/<band>_itcz.pdf
 ```
 
 The four set-fitting scripts (`run_regressions.py`, `run_eof_regressions.py`,
 `run_itcz_regressions.py`, `plot_itcz_regressions.py`) default to **only sets 5 & 10**
-and **only the decadal10** (slow-timescale) smoothing; add `--all-sets` to produce all
-ten sets and `--do-annuals` to also produce the annual (interannual) variant (the flags
-compose). `predict_scenarios.py` uses sets 5 & 10 from the decadal10 run, so it needs
-only the default run.
+on decadal means; add `--all-sets` to produce all ten sets. `predict_scenarios.py`
+uses sets 5 & 10, so it needs only the default run.
 
 **Variable sets (`--variables`).** Every script that makes per-variable output --
 `run_regressions.py`, `plot_warming_amoc_ratio.py`, `plot_case_grid_book.py`,
@@ -716,9 +710,9 @@ python scripts/plot_case_grid_book.py --variables key SHFLX   # sets and names m
 ```
 
 Every output is per variable, so a subset run simply rewrites that subset's files
-and leaves the others alone. A full run of everything takes
-about 11 minutes at low priority, mostly figure rendering (the fits take ~1 s per
-variable), with peak memory under 2 GB.
+and leaves the others alone. A full run of everything on all 46
+variables takes roughly 25–30 minutes, mostly figure rendering (the fits take ~1 s
+per variable), with peak memory under 2 GB.
 
 Each script is a thin wrapper over `src/` and prints what it writes. All outputs
 land under `data/` (git-ignored) and are fully regenerable from the inputs.
@@ -740,10 +734,9 @@ and time series (`scripts/plot_predictor_scatter.py`,
 scenario-prediction maps (`scripts/predict_scenarios.py`), and the ITCZ-centroid
 scalar regressions (`scripts/run_itcz_regressions.py`,
 `scripts/plot_itcz_regressions.py`), all built on `src/data_loader.py`,
-`src/regression.py`, and `src/output.py`. The regression, EOF, and ITCZ analyses run
-in a **decadal10** (10-year block-mean, slow-timescale) variant by default; the
-**annual** (interannual) variant is opt-in via `--do-annuals`, and only sets 5 & 10
-are fit unless `--all-sets` is given.
+`src/regression.py`, and `src/output.py`. The regression, EOF, and ITCZ analyses all
+use **decadal means** (10-year block means), and only sets 5 & 10 are fit unless
+`--all-sets` is given.
 
 ## Legacy CESM1 code
 
