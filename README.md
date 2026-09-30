@@ -376,7 +376,10 @@ outlines when it contributes more (e.g. ~100 annual values).
 figure whose axes carry the same units share the same axis range on those axes, so
 they compare directly by eye: e.g. the per-simulation time-series panels (one K
 range and one Sv range throughout), the per-mode PC-regression bars, and the ITCZ
-panels (one latitude range).
+panels (one latitude range). Temperature differences and anomalies (ΔT) count as a
+different unit from absolute temperatures, so an absolute global-mean temperature
+axis (~287 K) and an interhemispheric-difference axis (a few K) keep their own
+ranges, as in `predictor_scatter.pdf` and the ITCZ scatter page.
 
 **Drawing maps.** Gridded fields are drawn with `output.draw_field`, which projects
 the cell corners itself. Cartopy's `pcolormesh(transform=…)` spent ~1.3 s per map

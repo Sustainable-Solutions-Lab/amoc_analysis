@@ -158,8 +158,11 @@ rather than hiding them.
 - **Shared axis ranges**: Unless a plot specifies otherwise, panels of a
   multi-panel figure whose axes carry the same units use the same axis range on
   those axes (`plt.subplots(..., sharex=True, sharey=True)`, or one explicit range
-  computed over all panels), so panels compare directly by eye. Maps already share
-  their extent and, per page, their color scale.
+  computed over all panels), so panels compare directly by eye. Temperature
+  differences and anomalies (ΔT, e.g. `tas_interhemispheric_diff`, or tas minus a
+  reference) count as a different unit from absolute temperatures (e.g.
+  `tas_global_mean` ≈ 287 K), so the two never share a range just because both are
+  in K. Maps already share their extent and, per page, their color scale.
 - **Units and labels**: Always label axes with variable name and units; state the
   time range and any spatial averaging in the title or caption.
 
