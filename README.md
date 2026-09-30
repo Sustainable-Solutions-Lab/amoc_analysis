@@ -177,13 +177,23 @@ loaded field records these, plus its source file, as attributes.
 | `pr_minus_evap` | `PRECT` × 8.64e7 − `QFLX` × 86400 | mm day⁻¹ | precipitation minus evaporation (P − E) |
 | `prsn` | (`PRECSC` + `PRECSL`) × 8.64e7 | mm day⁻¹ | snowfall (water equivalent) |
 | `toa_net_down` | `FSNT` − `FLNT` | W m⁻² | net downward radiation at top of model |
-| `sfc_net_energy_down` | `FSNS` − `FLNS` − `LHFLX` − `SHFLX` | W m⁻² | net downward surface energy flux (radiative + turbulent) |
+| `sfc_net_energy_down` | `FSNS` − `FLNS` − `LHFLX` − `SHFLX` − 3.337e8 × (`PRECSC` + `PRECSL`) | W m⁻² | net downward surface energy flux (radiative + turbulent + melting of snowfall; see below) |
 | `cloud_radiative_effect` | `SWCF` + `LWCF` | W m⁻² | net cloud radiative effect at top of model |
 | `diurnal_temperature_range` | `TREFMXAV` − `TREFMNAV` | K | mean diurnal temperature range |
 | `planetary_albedo` | 1 − `FSNT` / `SOLIN` | 1 | planetary albedo (from annual-mean fluxes) |
 
-As checks, the control's global means are P − E ≈ 0 (−0.0006 mm day⁻¹), a top-of-model
-imbalance of −0.3 W m⁻² and a surface energy flux of +0.4 W m⁻².
+As checks, the control's global means are P − E ≈ 0 (−0.0006 mm day⁻¹), and over
+1850–2150 a top-of-model imbalance of −0.13 W m⁻² and a surface energy flux of
+−0.16 W m⁻², which agree as they must when the atmosphere stores no energy.
+
+**Surface energy flux and snowfall.** CAM's `LHFLX` includes only the latent heat of
+vaporization, so `sfc_net_energy_down` also subtracts the latent heat of fusion
+needed to melt the snow that falls: L_f ρ_w (`PRECSC` + `PRECSL`), with the CESM
+constants L_f = 3.337×10⁵ J kg⁻¹ and ρ_w = 1000 kg m⁻³
+(`data_loader.SNOW_MELT_ENERGY_PER_M`). The term is about 0.5–0.7 W m⁻² in the
+global mean and concentrated where snow falls. Without it the surface flux runs
+0.5–0.7 W m⁻² above the top-of-model flux; with it the two agree to within
+0.03 W m⁻² in the 2101–2150 means of the 1×, 2× and 4×CO₂ runs.
 
 **Water-flux units.** All water fluxes (precipitation, snowfall, evaporation,
 P − E) are in **mm day⁻¹** of liquid water (`data_loader.WATER_FLUX_UNITS`). CAM

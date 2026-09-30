@@ -49,6 +49,14 @@ M_PER_S_TO_MM_PER_DAY = 1000.0 * SECONDS_PER_DAY
 KG_M2_S_TO_MM_PER_DAY = SECONDS_PER_DAY
 WATER_FLUX_UNITS = "mm/day"
 
+# Energy of melting snowfall. CAM's LHFLX carries only the latent heat of
+# vaporization, so the surface energy budget must also remove the latent heat of
+# fusion of the snow that falls (PRECSC + PRECSL, m/s of liquid water). Values are
+# the CESM shared constants (shr_const_latice, shr_const_rhofw).
+LATENT_HEAT_OF_FUSION = 3.337e5  # J/kg
+FRESH_WATER_DENSITY = 1.0e3  # kg/m3
+SNOW_MELT_ENERGY_PER_M = LATENT_HEAT_OF_FUSION * FRESH_WATER_DENSITY  # J/m3 = (W/m2) / (m/s)
+
 # Analysis variables. Each has a ``definition`` (a formula in CAM field names,
 # recorded as provenance), a ``compute`` function mapping the raw CAM Dataset to
 # the field, and output ``units``/``long_name``. Three CAM fields carry CMIP names
@@ -113,9 +121,10 @@ _DERIVED_FIELDS = [
     ("toa_net_down", "FSNT - FLNT",
      lambda ds: ds["FSNT"] - ds["FLNT"],
      "W/m2", "Net downward radiation at top of model"),
-    ("sfc_net_energy_down", "FSNS - FLNS - LHFLX - SHFLX",
-     lambda ds: ds["FSNS"] - ds["FLNS"] - ds["LHFLX"] - ds["SHFLX"],
-     "W/m2", "Net downward surface energy flux (radiation + turbulent)"),
+    ("sfc_net_energy_down", "FSNS - FLNS - LHFLX - SHFLX - 3.337e8 * (PRECSC + PRECSL)",
+     lambda ds: (ds["FSNS"] - ds["FLNS"] - ds["LHFLX"] - ds["SHFLX"]
+                 - SNOW_MELT_ENERGY_PER_M * (ds["PRECSC"] + ds["PRECSL"])),
+     "W/m2", "Net downward surface energy flux (radiation + turbulent + snow melt)"),
     ("cloud_radiative_effect", "SWCF + LWCF",
      lambda ds: ds["SWCF"] + ds["LWCF"],
      "W/m2", "Net cloud radiative effect at top of model"),
