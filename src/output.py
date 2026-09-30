@@ -18,6 +18,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import shapely
 from matplotlib.lines import Line2D
+from matplotlib.ticker import MaxNLocator
 from scipy import stats
 
 import data_loader as dl
@@ -282,7 +283,7 @@ def plot_eof_patterns(eof_ds, title, out_path=None, cmap="RdBu_r", max_patterns=
         ax.set_global()
         ax.set_title(f"EOF {i + 1}  ({var[i] * 100:.1f}% var)", fontsize=10)
         cbar = fig.colorbar(mesh, ax=ax, shrink=0.7, pad=0.02)
-        cbar.set_label("EOF pattern (dimensionless, area-weighted RMS = 1)")
+        cbar.set_label("dimensionless (RMS = 1)")
     ax = fig.add_subplot(nrows, ncols, n_plot + 1)
     if n <= 20:
         ax.bar(np.arange(1, n + 1), var * 100)
@@ -291,6 +292,7 @@ def plot_eof_patterns(eof_ds, title, out_path=None, cmap="RdBu_r", max_patterns=
         ax.plot(np.arange(1, n + 1), np.cumsum(var) * 100, lw=1.2)
         ax.set_ylabel("cumulative variance (%)")
     ax.set_xlabel("EOF mode")
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
     ax.set_title(f"scree: {n} modes retained (Σ = {var.sum() * 100:.1f}%); "
                  f"mapped leading {n_plot}", fontsize=9)
     fig.suptitle(title, fontsize=12)
