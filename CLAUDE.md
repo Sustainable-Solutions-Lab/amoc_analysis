@@ -162,7 +162,13 @@ rather than hiding them.
   differences and anomalies (ΔT, e.g. `tas_interhemispheric_diff`, or tas minus a
   reference) count as a different unit from absolute temperatures (e.g.
   `tas_global_mean` ≈ 287 K), so the two never share a range just because both are
-  in K. Maps already share their extent and, per page, their color scale.
+  in K.
+- **Shared color scales**: the same rule applies to color. When several map
+  panels of one figure show the same quantity in the same units (e.g. the nine
+  cases of a case grid, the EOF patterns of one field, or regression coefficients
+  with the same units), they share one color scale (for diverging maps, one
+  symmetric bound computed over all those panels). Panels in different units
+  (e.g. per-K and per-Sv coefficients) keep their own scales.
 - **Units and labels**: Always label axes with variable name and units; state the
   time range and any spatial averaging in the title or caption.
 

@@ -381,6 +381,12 @@ different unit from absolute temperatures, so an absolute global-mean temperatur
 axis (~287 K) and an interhemispheric-difference axis (a few K) keep their own
 ranges, as in `predictor_scatter.pdf` and the ITCZ scatter page.
 
+**Shared color scales.** The same rule applies to color: map panels of one figure
+that show the same quantity in the same units share one color scale (one symmetric
+bound over all of them for diverging maps). This covers the nine cases of a case
+grid, the EOF patterns of one field, and coefficient maps with the same units;
+panels in different units (per-K vs per-Sv coefficients) keep their own scales.
+
 **Drawing maps.** Gridded fields are drawn with `output.draw_field`, which projects
 the cell corners itself. Cartopy's `pcolormesh(transform=…)` spent ~1.3 s per map
 checking for cells that wrap the map edge; `draw_field` takes ~0.01 s. PDF books
@@ -504,8 +510,14 @@ Method (`src/eof.py`):
   samples** (not per-run means) — this retains the between-run forced variability
   the predictors are meant to explain.
 - **Area-weighted covariance EOF:** anomalies are multiplied by √(zonal-band area
-  weight) before an economy SVD and the patterns divided by it afterward, so the
-  EOFs are in physical units. No per-cell standard-deviation normalization.
+  weight) before an economy SVD and the patterns divided by it afterward. No
+  per-cell standard-deviation normalization.
+- **Normalization:** each EOF is a dimensionless pattern scaled to an
+  **area-weighted RMS of 1** over the grid, so its values (order 1) do not depend
+  on model resolution. The PCs carry the field's units: |PCₖ(t)| is the
+  area-weighted RMS anomaly (e.g. K) that mode k contributes at time t, and
+  PCₖ × EOFₖ is that mode's anomaly field. The pattern maps of one field share a
+  color scale; the PC-regression bars are standardized and so dimensionless.
 - **Truncation:** two rules combined, the more restrictive winning — keep leading
   modes until cumulative variance reaches **≥ 95 %**, but never keep a mode that
   individually explains **< 1 %** of variance (the per-mode floor drops the long

@@ -197,6 +197,7 @@ def plot_set(fit, set_def, run_label, pdf, predictand, centering=None):
     ``pdf`` (an open ``PdfPages`` book, one page per set).
 
     One panel per predictor (the intercept is omitted). Stippling marks p > 0.05.
+    Panels whose coefficients carry the same units share one symmetric color scale.
     ``predictand`` is a ``regression.PREDICTANDS`` entry (label + units), used for
     titles and to form coefficient units ([predictand units] / [predictor units]).
     ``centering`` is the ``tag -> (mean, units)`` dict from
@@ -222,15 +223,21 @@ def plot_set(fit, set_def, run_label, pdf, predictand, centering=None):
     flat = list(axes.flat)
     for ax in flat[n:]:
         ax.set_visible(False)
+    units_of = {name: f"({punits}) / {PREDICTORS[name]['units']}" for name in predictors}
+    bound_of = {units: symmetric_bound(np.concatenate(
+                    [fit["coef"].sel(param=name).values.ravel()
+                     for name in predictors if units_of[name] == units]))
+                for units in set(units_of.values())}
     for ax, name in zip(flat, predictors):
         meta = PREDICTORS[name]
         plot_coefficient_map(
             fit["coef"].sel(param=name),
             fit["pvalue"].sel(param=name),
             title=f"∂{plabel}/∂{meta['label']}  ({meta['label']} coefficient)",
-            units=f"({punits}) / {meta['units']}",
+            units=units_of[name],
             ax=ax,
             cmap=cmap,
+            bound=bound_of[units_of[name]],
         )
     preds = ", ".join(PREDICTORS[p]["label"] for p in predictors)
     centering_line = ""
@@ -247,12 +254,13 @@ def plot_set(fit, set_def, run_label, pdf, predictand, centering=None):
     _save_figure(fig, pdf=pdf)
 
 
-def plot_eof_patterns(eof_ds, title, units, out_path=None, cmap="RdBu_r", max_patterns=9,
+def plot_eof_patterns(eof_ds, title, out_path=None, cmap="RdBu_r", max_patterns=9,
                       pdf=None):
     """Map the leading EOF spatial patterns plus a scree panel of variance explained.
 
-    ``eof_ds`` is the Dataset from ``eof.compute_eofs``. Patterns use a symmetric
-    diverging colormap. Only the leading ``max_patterns`` modes are mapped (fields
+    ``eof_ds`` is the Dataset from ``eof.compute_eofs``, whose EOFs are dimensionless
+    patterns of area-weighted RMS 1 (the PCs carry the physical amplitude). All
+    mapped patterns share one symmetric diverging color scale. Only the leading ``max_patterns`` modes are mapped (fields
     such as precipitation are not low-rank and can retain hundreds of modes at the
     95% threshold — mapping them all is unreadable and the regression uses every
     retained mode regardless). The final panel is a scree: a per-mode bar when the
@@ -266,16 +274,15 @@ def plot_eof_patterns(eof_ds, title, units, out_path=None, cmap="RdBu_r", max_pa
     ncols = 2
     nrows = -(-(n_plot + 1) // ncols)  # +1 for the scree panel
     fig = plt.figure(figsize=(6.0 * ncols, 3.4 * nrows))
+    bound = symmetric_bound(eofs.isel(mode=slice(0, n_plot)).values)
     for i in range(n_plot):
         ax = fig.add_subplot(nrows, ncols, i + 1, projection=PROJECTION)
-        e = eofs.isel(mode=i)
-        bound = symmetric_bound(e.values)
-        mesh = draw_field(ax, e, cmap=cmap, vmin=-bound, vmax=bound)
+        mesh = draw_field(ax, eofs.isel(mode=i), cmap=cmap, vmin=-bound, vmax=bound)
         draw_coastlines(ax)
         ax.set_global()
         ax.set_title(f"EOF {i + 1}  ({var[i] * 100:.1f}% var)", fontsize=10)
         cbar = fig.colorbar(mesh, ax=ax, shrink=0.7, pad=0.02)
-        cbar.set_label(units)
+        cbar.set_label("EOF pattern (dimensionless, area-weighted RMS = 1)")
     ax = fig.add_subplot(nrows, ncols, n_plot + 1)
     if n <= 20:
         ax.bar(np.arange(1, n + 1), var * 100)
@@ -348,7 +355,7 @@ def plot_pc_regression(pc_fit, predictors, pcs, title, out_path=None,
     _save_figure(fig, out_path, pdf)
 
 
-def plot_pc_prediction(eof_ds, pc_fit, predictors, title, out_path=None,
+def plot_pc_prediction(eof_ds, pc_fit, predictors, title, units, out_path=None,
                        pdf=None, max_modes=3):
     """Overlay the fitted (X·β) PC against the actual PC over time, per simulation.
 
@@ -357,6 +364,7 @@ def plot_pc_prediction(eof_ds, pc_fit, predictors, title, out_path=None,
     ``max_modes`` modes are drawn (solid = actual, dashed = fitted) on one panel
     per run; lines break across genuine year gaps but stay connected across
     regular decadal steps. ``predictors`` must contain the regressed columns.
+    ``units`` are the field's units, which the PCs carry (``eof.compute_eofs``).
     """
     pcs = eof_ds["pcs"]
     years = eof_ds["sample"].values
@@ -390,7 +398,7 @@ def plot_pc_prediction(eof_ds, pc_fit, predictors, title, out_path=None,
                     ls="--", label=f"PC{k + 1} fitted")
         ax.axhline(0, color="k", lw=0.5)
         ax.set_title(run, fontsize=10)
-        ax.set_ylabel("PC amplitude")
+        ax.set_ylabel(label_with_units("PC", units))
         ax.grid(alpha=0.3)
     axes[0, 0].legend(fontsize=7, ncol=n_modes, loc="best")
     axes[-1, 0].set_xlabel("year")

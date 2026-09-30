@@ -35,8 +35,11 @@ def compute_eofs(field, variance_threshold=0.95, min_variance_fraction=0.0):
     """Area-weighted covariance EOFs of grand-mean anomalies of ``field``.
 
     ``field`` has dims (sample, lat, lon). Returns an xarray Dataset with
-    ``eofs`` (mode, lat, lon; physical units, un-weighted), ``pcs`` (sample, mode;
-    = U·S, physical amplitude), ``variance_fraction`` (mode), and ``mean_map``
+    ``eofs`` (mode, lat, lon; dimensionless patterns scaled so their area-weighted
+    mean square over the grid is 1, i.e. area-weighted RMS = 1, independent of grid
+    resolution), ``pcs`` (sample, mode; in the field's units: |PC| is the
+    area-weighted RMS anomaly the mode contributes, and PC × EOF is that mode's
+    anomaly field), ``variance_fraction`` (mode), and ``mean_map``
     (lat, lon). Modes are truncated by two rules combined (the more restrictive
     wins): keep leading modes until the cumulative variance fraction reaches
     ``variance_threshold`` (use 1.0 to keep all), but never keep a mode that
@@ -59,8 +62,12 @@ def compute_eofs(field, variance_threshold=0.95, min_variance_fraction=0.0):
     n_min = int(below[0]) if below.size else S.size
     n_modes = max(1, min(n_var, n_min, S.size))
 
-    pcs = (U[:, :n_modes] * S[:n_modes])
-    eofs = (Vt[:n_modes] / sw[None, :]).reshape(n_modes, nlat, nlon)
+    # The SVD's Vt rows have unit sum of squares over the grid cells; rescaling by
+    # sqrt(n_cells) makes each EOF's area-weighted MEAN square 1 (weights have mean
+    # 1), and the PCs take the inverse factor so PC x EOF is unchanged.
+    root_n_cells = np.sqrt(sw.size)
+    pcs = U[:, :n_modes] * S[:n_modes] / root_n_cells
+    eofs = (Vt[:n_modes] * root_n_cells / sw[None, :]).reshape(n_modes, nlat, nlon)
 
     modes = np.arange(1, n_modes + 1)
     ds = xr.Dataset(

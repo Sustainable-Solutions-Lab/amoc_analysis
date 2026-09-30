@@ -68,6 +68,11 @@ CAVEATS = """EOF / principal-component analysis of decadal-mean fields.
       NetCDF group per set (set5, set10, ...): coef/se/tstat/pvalue on
       (param, mode) and r2 on mode. Read with xr.open_dataset(path, group="set5").
       t and p are scale-invariant, so they match the standardized bars.
+- Normalization: each EOF is a dimensionless pattern with area-weighted RMS = 1
+  over the grid (independent of resolution); the PCs carry the field's units, so
+  |PC| is the area-weighted RMS anomaly the mode contributes and PC x EOF is the
+  mode's anomaly field. Raw coefs are therefore in [field units] / [predictor
+  units] of that RMS amplitude.
 - The spatial fingerprint maps (Sum_k beta_k * EOF_k) are intentionally NOT
   produced; scripts/run_regressions.py maps the per-grid-point regressions.
 - p-values are nominal OLS on the 90 decadal samples. Decadal means within a run
@@ -98,7 +103,7 @@ def run_for_predictand(name, all_sets):
     pdf_path = os.path.join(OUT_DIR, f"{name}_pc.pdf")
     with PdfPages(pdf_path) as pdf:
         plot_eof_patterns(
-            eof_ds, f"EOF patterns: {name} (decadal-mean anomalies)", predictand["units"],
+            eof_ds, f"EOF patterns: {name} (decadal-mean anomalies)",
             cmap=predictand["cmap"], pdf=pdf,
         )
         for num, (pc_fit, names) in fits.items():
@@ -115,7 +120,7 @@ def run_for_predictand(name, all_sets):
             plot_pc_prediction(
                 eof_ds, pc_fit, predictors[names],
                 f"PC fitted vs actual: {name} (decadal means) — set {num}",
-                pdf=pdf,
+                predictand["units"], pdf=pdf,
             )
     nc_path = os.path.join(OUT_DIR, f"{name}_pc.nc")
     reg.write_set_fits(nc_path, {
