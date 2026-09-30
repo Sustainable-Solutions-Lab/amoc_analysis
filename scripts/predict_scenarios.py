@@ -51,7 +51,7 @@ import xarray as xr
 
 import data_loader as dl
 import regression as reg
-from output import plot_map_grid, symmetric_bound
+from output import label_with_units, plot_map_grid, symmetric_bound, value_with_units
 
 REG_BASE = os.path.join(dl._REPO_ROOT, "data", "output", "regression")
 OUT_DIR = os.path.join(dl._REPO_ROOT, "data", "output", "scenarios")
@@ -152,14 +152,14 @@ def run_for_predictand(name, state):
     for set_num, grid in panels.items():
         for cell, (title, field) in sorted(grid.items()):
             print(f"[{name}] set {set_num} {cell}: {title}: global mean "
-                  f"{float(dl.global_mean(field)):.4g} {units}")
+                  + value_with_units(f"{float(dl.global_mean(field)):.4g}", units))
         out_path = os.path.join(OUT_DIR, f"predicted_change_{name}_set{set_num}.pdf")
         plot_map_grid(
             grid, (3, 3),
             title=(f"Predicted decadal-mean Δ{name}, set {set_num} "
                    f"({'Tglob + AMOC' if set_num == 5 else 'Tglob + AMOC + Tglob·AMOC'}); "
                    f"rows: warming, columns: AMOC decline"),
-            units=f"Δ{name} ({units})", cmap=cmap, bound=bound, out_path=out_path,
+            units=label_with_units(f"Δ{name}", units), cmap=cmap, bound=bound, out_path=out_path,
         )
         print(f"wrote {out_path}")
 

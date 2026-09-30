@@ -34,6 +34,20 @@ DATA_CRS = ccrs.PlateCarree()
 COASTLINE_TOLERANCE = 1.0
 COASTLINE_MIN_LENGTH = 5.0
 
+# CF-convention units string for a dimensionless quantity (e.g. planetary albedo).
+# It stays "1" in the data attributes but is left off plot labels.
+DIMENSIONLESS_UNITS = "1"
+
+
+def label_with_units(label, units):
+    """``"label (units)"``, or bare ``label`` for a dimensionless quantity."""
+    return label if units == DIMENSIONLESS_UNITS else f"{label} ({units})"
+
+
+def value_with_units(value_text, units):
+    """``"value_text units"``, or bare ``value_text`` for a dimensionless quantity."""
+    return value_text if units == DIMENSIONLESS_UNITS else f"{value_text} {units}"
+
 
 @functools.cache
 def coarse_coastline():
@@ -756,10 +770,11 @@ def plot_case_grid_page(field, title, cmap, vmin, vmax, pdf, rasterized):
             draw_coastlines(ax)
             ax.set_global()
             ax.set_title(f"{dl.CASE_GRID[i][j]}   global mean = "
-                         f"{float(dl.global_mean(panel)):.4g} {units}", fontsize=10)
+                         + value_with_units(f"{float(dl.global_mean(panel)):.4g}", units),
+                         fontsize=10)
     cbar = fig.colorbar(mesh, ax=axes, orientation="horizontal", shrink=0.5,
                         pad=0.02, aspect=40)
-    cbar.set_label(f"{field.name} ({units})")
+    cbar.set_label(label_with_units(field.name, units))
     fig.suptitle(title, fontsize=12)
     _save_figure(fig, pdf=pdf, dpi=CASE_GRID_RASTER_DPI)
 
@@ -801,7 +816,7 @@ def plot_case_grid_book(grid, pdf, rasterized):
     of |difference| over the page; white = 0): ``RdBu`` (wet = blue) for water
     fluxes (``data_loader.WATER_FLUX_UNITS``), else ``RdBu_r``.
     """
-    header = (f"{grid.name}: {grid.attrs['long_name']} ({grid.attrs['units']}), "
+    header = (f"{grid.name}: {label_with_units(grid.attrs['long_name'], grid.attrs['units'])}, "
               f"CESM1.2 mean {grid.attrs['time_mean']}")
     diverging = "RdBu" if grid.attrs["units"] == dl.WATER_FLUX_UNITS else "RdBu_r"
     (raw_label, _), *difference_pages = CASE_GRID_PAGES
