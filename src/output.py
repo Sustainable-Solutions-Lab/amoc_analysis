@@ -316,7 +316,8 @@ def plot_pc_regression(pc_fit, predictors, pcs, title, out_path=None,
 
     ncols = min(4, n)
     nrows = -(-n // ncols)
-    fig, axes = plt.subplots(nrows, ncols, figsize=(3.6 * ncols, 3.0 * nrows), squeeze=False)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(3.6 * ncols, 3.0 * nrows), squeeze=False,
+                             sharey=True)
     flat = list(axes.flat)
     for ax in flat[n:]:
         ax.set_visible(False)
@@ -370,7 +371,8 @@ def plot_pc_prediction(eof_ds, pc_fit, predictors, title, out_path=None,
 
     n_modes = min(pcs.sizes["mode"], max_modes)
     colors = plt.cm.tab10(np.arange(n_modes))
-    fig, axes = plt.subplots(len(runs), 1, figsize=(10, 2.6 * len(runs)), squeeze=False)
+    fig, axes = plt.subplots(len(runs), 1, figsize=(10, 2.6 * len(runs)), squeeze=False,
+                             sharex=True, sharey=True)
     for ax, run in zip(axes[:, 0], runs):
         m = run_of == run
         order = np.argsort(years[m])
@@ -415,9 +417,12 @@ def plot_scalar_timeseries(annual, decadal, title, out_path):
     ref = {v: float(annual[v].values.mean()) for v, _, _ in left_vars}  # shared baseline
     runs = list(dict.fromkeys(annual["run"].values))
 
-    fig, axes = plt.subplots(len(runs), 1, figsize=(11, 2.9 * len(runs)), squeeze=False)
-    for ax, run in zip(axes[:, 0], runs):
-        ax2 = ax.twinx()
+    fig, axes = plt.subplots(len(runs), 1, figsize=(11, 2.9 * len(runs)), squeeze=False,
+                             sharex=True, sharey=True)
+    twins = [ax.twinx() for ax in axes[:, 0]]
+    for twin in twins[1:]:  # one AMOC (Sv) range on every panel, like the K axes
+        twin.sharey(twins[0])
+    for ax, ax2, run in zip(axes[:, 0], twins, runs):
         for ds, style in [(annual, dict(lw=0.9, alpha=0.65)),
                           (decadal, dict(lw=1.8, marker="o", ms=3))]:
             m = ds["run"].values == run
@@ -505,7 +510,8 @@ def plot_itcz_timeseries(annual, decadal, title, out_path=None, pdf=None):
     ``regression.build_pooled_scalar`` (block=None and block=10).
     """
     runs = list(dict.fromkeys(annual["run"].values))
-    fig, axes = plt.subplots(len(runs), 1, figsize=(11, 2.6 * len(runs)), squeeze=False)
+    fig, axes = plt.subplots(len(runs), 1, figsize=(11, 2.6 * len(runs)), squeeze=False,
+                             sharex=True, sharey=True)
     for ax, run in zip(axes[:, 0], runs):
         for da, style in [(annual, dict(lw=0.9, alpha=0.65)),
                           (decadal, dict(lw=1.8, marker="o", ms=3))]:
@@ -546,12 +552,12 @@ def plot_itcz_predicted_vs_observed(observed, run_of, panels, title, out_path=No
     runs = [case for case in dl.EXPERIMENTS if case in set(run_of)]
     fig, axes = plt.subplots(1, len(panels), figsize=(4.8 * len(panels), 4.8),
                              squeeze=False)
+    # One range for both axes of every panel, spanning all observed and predicted values.
+    values = np.concatenate([observed] + [np.asarray(p["predicted"]) for p in panels])
+    pad = 0.05 * (values.max() - values.min())
+    lim = (float(values.min() - pad), float(values.max() + pad))
     for ax, panel in zip(axes[0], panels):
         pred = panel["predicted"]
-        lo = float(min(observed.min(), pred.min()))
-        hi = float(max(observed.max(), pred.max()))
-        pad = 0.05 * (hi - lo)
-        lim = (lo - pad, hi + pad)
         for run in runs:
             m = run_of == run
             ax.scatter(observed[m], pred[m], s=14, alpha=0.7,
@@ -582,7 +588,7 @@ def plot_itcz_coefficients(panels, title, out_path=None, pdf=None):
     significance rather than bar heights across different predictors.
     """
     fig, axes = plt.subplots(1, len(panels), figsize=(4.2 * len(panels), 4.4),
-                             squeeze=False)
+                             squeeze=False, sharey=True)
     for ax, panel in zip(axes[0], panels):
         x = np.arange(len(panel["names"]))
         coef = np.asarray(panel["coef"])
@@ -624,7 +630,7 @@ def plot_itcz_scatter(predictors, response, fits, single_vars, title, out_path=N
     y = response.values
 
     fig, axes = plt.subplots(1, len(single_vars), figsize=(5.2 * len(single_vars), 4.6),
-                             squeeze=False)
+                             squeeze=False, sharey=True)
     for ax, var in zip(axes[0], single_vars):
         x = predictors[var].values
         for run in runs:

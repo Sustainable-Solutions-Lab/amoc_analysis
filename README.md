@@ -372,6 +372,12 @@ marker (circle, triangle, square; `output.case_marker_style`). Scatter markers a
 filled when each simulation contributes ≤ 10 points (e.g. decadal means) and open
 outlines when it contributes more (e.g. ~100 annual values).
 
+**Shared axis ranges.** Unless a plot specifies otherwise, panels of a multi-panel
+figure whose axes carry the same units share the same axis range on those axes, so
+they compare directly by eye: e.g. the per-simulation time-series panels (one K
+range and one Sv range throughout), the per-mode PC-regression bars, and the ITCZ
+panels (one latitude range).
+
 **Drawing maps.** Gridded fields are drawn with `output.draw_field`, which projects
 the cell corners itself. Cartopy's `pcolormesh(transform=…)` spent ~1.3 s per map
 checking for cells that wrap the map edge; `draw_field` takes ~0.01 s. PDF books

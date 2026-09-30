@@ -155,6 +155,11 @@ rather than hiding them.
   `output.case_marker_style(case, points_per_case)`, which applies the rule
   (constants `output.CO2_MARKER`, `output.FILLED_MARKER_MAX_POINTS`). Every figure that distinguishes cases uses these
   two conventions — never a generic color cycle.
+- **Shared axis ranges**: Unless a plot specifies otherwise, panels of a
+  multi-panel figure whose axes carry the same units use the same axis range on
+  those axes (`plt.subplots(..., sharex=True, sharey=True)`, or one explicit range
+  computed over all panels), so panels compare directly by eye. Maps already share
+  their extent and, per page, their color scale.
 - **Units and labels**: Always label axes with variable name and units; state the
   time range and any spatial averaging in the title or caption.
 
