@@ -1,20 +1,18 @@
-"""Plots for the ITCZ-latitude analysis: time series and regression figures.
+"""Plots for the ITCZ-latitude analysis: time series and decadal-mean regression figures.
 
-For each tropical-band centroid (20S-20N, 30S-30N) writes a time series to
-``data/output/itcz/{band20,band30}/`` and the regression figures for the decadal10
-sample (``decadal10/`` subdir) by default; pass ``--do-annuals`` to also write the
-annual-sample figures (same directory):
+For each tropical-band centroid (``band20`` = 20S-20N, ``band30`` = 30S-30N) writes
+one book, ``data/output/itcz/<band>_itcz.pdf``, with pages:
 
-- ``itcz_timeseries.pdf`` -- the precip centroid latitude per simulation, annual
-  (thin) with the decadal (10-year block-mean) values overlaid (band level only).
-- ``itcz_scatter.pdf`` -- centroid latitude vs each single predictor (Tglob, ΔT_NS,
-  AMOC), with the OLS line, 95% confidence band, and slope ± SE / R² / p annotated.
-- ``itcz_predicted_vs_observed.pdf`` -- predicted vs observed centroid latitude for
-  the multi-predictor sets (5 & 10 by default; 5, 6, 10 with ``--all-sets``), with
-  the 1:1 line and R².
-- ``itcz_coefficients.pdf`` -- partial-slope (coef ± SE) bar charts for the same sets.
+1. the precip centroid latitude per simulation, annual (thin) with the decadal
+   (10-year block-mean) values overlaid;
+2. centroid latitude vs each single predictor (Tglob, ΔT_NS, AMOC) on the pooled
+   decadal-mean sample, with the OLS line, 95% confidence band, and slope ± SE /
+   R² / p annotated;
+3. predicted vs observed centroid latitude for the multi-predictor sets (5 & 10 by
+   default; 5, 6, 10 with ``--all-sets``), with the 1:1 line and R²;
+4. partial-slope (coef ± SE) bar charts for the same sets.
 
-    python scripts/plot_itcz_regressions.py [--all-sets] [--do-annuals]
+    python scripts/plot_itcz_regressions.py [--all-sets]
 """
 
 import argparse
@@ -22,6 +20,8 @@ import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+
+from matplotlib.backends.backend_pdf import PdfPages
 
 import data_loader as dl
 import regression as reg
@@ -32,44 +32,31 @@ from output import (
     plot_itcz_timeseries,
 )
 
-OUT_BASE = os.path.join(dl._REPO_ROOT, "data", "output", "itcz")
+OUT_DIR = os.path.join(dl._REPO_ROOT, "data", "output", "itcz")
 SINGLE_VARS = ["tas_global_mean", "tas_interhemispheric_diff", "amoc_strength"]
 MULTI_SETS = [5, 6, 10]  # multi-predictor sets to visualize jointly
 
-RESPONSES = [
-    {"tag": "band20", "var": "precip_centroid_lat_20", "label": "20S-20N"},
-    {"tag": "band30", "var": "precip_centroid_lat_30", "label": "30S-30N"},
-]
 
+def plot_regression_pages(predictors, response, band, all_sets, pdf):
+    """Append the scatter, predicted-vs-observed, and coefficient pages to ``pdf``.
 
-def make_regression_figures(predictors, response, out_dir, band, sample_tag, all_sets):
-    """Write the scatter, predicted-vs-observed, and coefficient figures.
-
-    ``predictors``/``response`` are a pooled sample (annual or decadal); ``band``
-    and ``sample_tag`` label the figures ("20S-20N", "annual"/"decadal"). The
-    multi-predictor panels cover the selected sets intersected with ``MULTI_SETS``.
+    ``predictors``/``response`` are the pooled decadal-mean sample; ``band`` labels
+    the figures ("20S-20N"). The multi-predictor pages cover the selected sets
+    intersected with ``MULTI_SETS``.
     """
-    os.makedirs(out_dir, exist_ok=True)
-
     fits = {v: reg.fit_scalar_ols(predictors[[v]], response) for v in SINGLE_VARS}
-    sc_path = os.path.join(out_dir, "itcz_scatter.pdf")
     plot_itcz_scatter(
         predictors, response, fits, SINGLE_VARS,
         f"ITCZ latitude (precip centroid, {band}) vs scalar predictors "
-        f"(pooled {sample_tag} sample) — OLS line, 95% CI band",
-        sc_path,
+        f"(pooled decadal means, n={response.sizes['sample']}) — OLS line, 95% CI band",
+        pdf=pdf,
     )
-    print(f"wrote {sc_path}  (n={response.sizes['sample']})")
 
     # Multi-predictor joint fits (the selected sets within MULTI_SETS = {5, 6, 10};
     # 5 & 10 by default), with the orthogonalized + quadratic columns on the sample.
     full_p = reg.add_quadratic_columns(reg.add_orthogonalized_columns(predictors))
-    run_of = full_p["run"].values
-    observed = response.values
     pvo_panels, coef_panels = [], []
-    for set_def in reg.select_predictor_sets(all_sets):
-        if set_def["number"] not in MULTI_SETS:
-            continue
+    for set_def in (s for s in reg.select_predictor_sets(all_sets) if s["number"] in MULTI_SETS):
         names = set_def["predictors"]
         fit = reg.fit_scalar_ols(full_p[names], response)
         disp = "+".join(reg.PREDICTORS[p]["label"] for p in names)
@@ -88,23 +75,18 @@ def make_regression_figures(predictors, response, out_dir, band, sample_tag, all
             "pvalue": [float(fit["pvalue"].sel(param=p)) for p in params],
         })
 
-    pvo_path = os.path.join(out_dir, "itcz_predicted_vs_observed.pdf")
     plot_itcz_predicted_vs_observed(
-        observed, run_of, pvo_panels,
+        response.values, full_p["run"].values, pvo_panels,
         f"ITCZ latitude (precip centroid, {band}): predicted vs observed "
-        f"(pooled {sample_tag} sample)",
-        pvo_path,
+        "(pooled decadal means)",
+        pdf=pdf,
     )
-    print(f"wrote {pvo_path}")
-
-    coef_path = os.path.join(out_dir, "itcz_coefficients.pdf")
     plot_itcz_coefficients(
         coef_panels,
         f"ITCZ latitude (precip centroid, {band}): partial slopes ± SE "
-        f"(pooled {sample_tag} sample)",
-        coef_path,
+        "(pooled decadal means)",
+        pdf=pdf,
     )
-    print(f"wrote {coef_path}")
 
 
 def main():
@@ -113,36 +95,23 @@ def main():
         "--all-sets", action="store_true",
         help="visualize all multi-predictor sets (5, 6, 10); default: sets 5 & 10",
     )
-    parser.add_argument(
-        "--do-annuals", action="store_true",
-        help="also write the annual-sample regression figures (default: decadal10 only)",
-    )
     args = parser.parse_args()
-    for response in RESPONSES:
-        band_dir = os.path.join(OUT_BASE, response["tag"])
-        os.makedirs(band_dir, exist_ok=True)
+    os.makedirs(OUT_DIR, exist_ok=True)
+    for response in reg.ITCZ_RESPONSES:
         band = response["label"]
-
         annual_r = reg.build_pooled_scalar(response["var"])[1]
-        decadal_r = reg.build_pooled_scalar(response["var"], block=10)[1]
-        ts_path = os.path.join(band_dir, "itcz_timeseries.pdf")
-        plot_itcz_timeseries(
-            annual_r, decadal_r,
-            f"ITCZ latitude (precip centroid, {band}) — annual (thin) + decadal "
-            "means (markers)",
-            ts_path,
-        )
-        print(f"wrote {ts_path}  (annual n={annual_r.sizes['sample']}, "
+        predictors, decadal_r = reg.build_pooled_scalar(response["var"], block=reg.DECADAL_BLOCK)
+        out_path = os.path.join(OUT_DIR, f"{response['tag']}_itcz.pdf")
+        with PdfPages(out_path) as pdf:
+            plot_itcz_timeseries(
+                annual_r, decadal_r,
+                f"ITCZ latitude (precip centroid, {band}) — annual (thin) + decadal "
+                "means (markers)",
+                pdf=pdf,
+            )
+            plot_regression_pages(predictors, decadal_r, band, args.all_sets, pdf)
+        print(f"wrote {out_path}  (annual n={annual_r.sizes['sample']}, "
               f"decadal n={decadal_r.sizes['sample']})")
-
-        for smoothing in reg.select_smoothings(args.do_annuals):
-            predictors, resp = reg.build_pooled_scalar(
-                response["var"], block=smoothing["block"]
-            )
-            out_dir = os.path.join(band_dir, smoothing["subdir"])
-            make_regression_figures(
-                predictors, resp, out_dir, band, smoothing["tag"], args.all_sets
-            )
 
 
 if __name__ == "__main__":

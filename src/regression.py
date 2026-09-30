@@ -139,22 +139,29 @@ def select_predictor_sets(all_sets=False):
     return [s for s in PREDICTOR_SETS if s["number"] in DEFAULT_SET_NUMBERS]
 
 
-# Smoothing variants the orchestration scripts can run: 'annual' (interannual) and
-# 'decadal10' (non-overlapping 10-year block means, written to a decadal10/ subdir).
-# decadal10 is the default; the annual variant is opt-in via each script's
-# ``--do-annuals`` flag.
-SMOOTHINGS = [
-    {"tag": "annual", "block": None, "subdir": ""},
-    {"tag": "decadal10", "block": 10, "subdir": "decadal10"},
+# All regression analyses use decadal means: non-overlapping DECADAL_BLOCK-year
+# block means per run, applied to predictors and predictand alike before pooling.
+DECADAL_BLOCK = 10
+
+# ITCZ-latitude responses (scripts/*_itcz_regressions.py): the precipitation-mass
+# centroid latitude over each tropical band, a scalar in the per-run scalar files.
+ITCZ_RESPONSES = [
+    {"tag": "band20", "var": "precip_centroid_lat_20", "label": "20S-20N"},
+    {"tag": "band30", "var": "precip_centroid_lat_30", "label": "30S-30N"},
 ]
 
 
-def select_smoothings(do_annuals=False):
-    """Smoothing variants to run: decadal10 only by default; both (annual first when
-    requested) when ``do_annuals``. The decadal10 subdir layout is unchanged either way."""
-    if do_annuals:
-        return SMOOTHINGS
-    return [s for s in SMOOTHINGS if s["tag"] == "decadal10"]
+def set_group(set_number):
+    """NetCDF group name holding predictor set ``set_number``'s fit, e.g. ``set5``."""
+    return f"set{set_number}"
+
+
+def write_set_fits(path, fits):
+    """Write ``{set number: fit Dataset}`` to one NetCDF file, one group per set
+    (``set_group``); read a set back with ``xr.open_dataset(path, group=...)``."""
+    modes = ["w"] + ["a"] * (len(fits) - 1)
+    for mode, (number, fit) in zip(modes, fits.items()):
+        fit.to_netcdf(path, group=set_group(number), mode=mode)
 
 
 # Union of all predictors used in any set; defines the common sample of years.

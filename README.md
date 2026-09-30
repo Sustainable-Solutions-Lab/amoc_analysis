@@ -472,8 +472,9 @@ low-frequency response surface. Decadal results go to the `decadal10/` subdirect
 per-grid-point maps (it does not replace `run_regressions.py`). It decomposes each
 gridded field into empirical orthogonal functions (EOFs) and examines how the
 leading principal-component (PC) time series — the EOF *weightings over time* —
-behave and relate to the predictors. Like the gridded regressions it produces the
-**decadal10** variant by default (the annual variant is opt-in via `--do-annuals`).
+behave and relate to the predictors. It works on **decadal means** only (10-year
+block means per run, pooled n = 90), and like the other per-variable scripts takes
+`--variables`.
 
 Method (`src/eof.py`):
 
@@ -486,41 +487,36 @@ Method (`src/eof.py`):
 - **Truncation:** two rules combined, the more restrictive winning — keep leading
   modes until cumulative variance reaches **≥ 95 %**, but never keep a mode that
   individually explains **< 1 %** of variance (the per-mode floor drops the long
-  low-variance noise tail). Counts are reported per field/variant.
-  `eof_patterns.pdf` maps up to the leading 9 modes.
+  low-variance noise tail). Counts are reported per field. The patterns page maps
+  up to the leading 9 modes.
 - **PC regression:** the retained PCs are regressed on the selected predictor sets
   (5 & 10 by default; all ten with `--all-sets`, including the orthogonalized,
   quadratic, and interaction columns) with an intercept; the PC-space coefficients
   (coef/SE/t/p) are saved.
 
-Outputs per predictand and variant (`data/output/eof/<predictand>/` and
-`…/decadal10/`):
+Outputs are flat in `data/output/eof/`, two files per variable plus a shared
+caveats `README.txt`:
 
-- `eof_patterns.pdf` — the leading EOF spatial patterns + a variance scree.
-- `pc_timeseries.pdf` — the **EOF weightings (PCs) over time**, one panel per
-  simulation; lines break across genuine year gaps but stay connected across
-  regular decadal steps.
-- `pc_regression_set{N}_*.nc` — OLS of the PCs on each predictor set (PC-space
-  coef/SE/t/p and per-mode R²), plus a caveats `README.txt`.
+- `<var>_pc.nc` — OLS of the PCs on every predictor set fit, in raw PC units:
+  `coef_set<N>`, `se_set<N>`, `tstat_set<N>`, `pvalue_set<N>` on
+  `(param_set<N>, mode)` and `r2_set<N>` on `mode`.
+- `<var>_pc.pdf`, in page order:
+  1. the leading EOF spatial patterns + a variance scree;
+  2. the PC-on-scalar regression — the EOF analog of the 2D coefficient maps, with
+     the discrete EOF-mode index replacing the (lat, lon) grid. One **page per
+     predictor set**; each page has one panel per retained EOF mode, with a bar per
+     predictor showing the **standardized** coefficient β·σ(xⱼ)/σ(PCₘ) (z-scoring
+     predictors and the PC, so bars are comparable across modes — raw coefficients
+     scale with each PC's amplitude) and a ±SE whisker. Non-significant bars
+     (p > 0.05) are faded; the panel title reports R² and the mode's variance share.
+     t/p are scale-invariant and match `<var>_pc.nc`;
+  3. one **page per richer set** among the 3-index set 6, the quadratic set 9, and
+     the interaction set 10 that was actually fit (only set 10 by default; all three
+     with `--all-sets`): the fitted X·β overlaid on the actual PC over time, one
+     panel per simulation — a direct view of how well the scalars predict each EOF
+     weighting.
 
-The **decadal** variant additionally renders the PC-on-scalar regression — the EOF
-analog of the 2D coefficient maps, with the discrete EOF-mode index replacing the
-(lat, lon) grid:
-
-- `pc_regression.pdf` — one **page per predictor set**; each page has one panel per
-  retained EOF mode, with a bar per predictor showing the **standardized**
-  coefficient β·σ(xⱼ)/σ(PCₘ) (z-scoring predictors and the PC, so bars are
-  comparable across modes — raw coefficients scale with each PC's amplitude) and a
-  ±SE whisker. Non-significant bars (p > 0.05) are faded; the panel title reports
-  R² and the mode's variance share. t/p are scale-invariant and match the per-set
-  `pc_regression_set{N}_*.nc`.
-- `pc_prediction.pdf` — one **page per richer set** among the 3-index set 6, the
-  quadratic set 9, and the interaction set 10 that was actually fit (only set 10 by
-  default; all three with `--all-sets`): the fitted X·β overlaid on the actual PC
-  over time, one panel per simulation — a direct view of how well the scalars
-  predict each EOF weighting.
-
-**Results (CESM1.2, decadal10, n = 90).**
+**Results (CESM1.2, decadal means, n = 90).**
 
 | Field | Modes kept (cum. var.) | Leading modes (% var.) | Set 5 R² of PC1, PC2 |
 | --- | --- | --- | --- |
@@ -582,7 +578,7 @@ between two states is `coef · (predictor(X) − predictor(R))`; the intercept c
 and set 10 evaluates its centered columns and interaction with the fit's centering
 means.
 
-Outputs: `data/output/scenarios/predicted_change_{tas,prc,pr}_set{5,10}.pdf`, one page
+Outputs: `data/output/scenarios/predicted_change_<predictand>_set{5,10}.pdf`, one page
 each. All panels for a predictand, **in both sets**, share one symmetric color scale
 (99th percentile of |change|), so set 5 and set 10 compare directly. Each panel title
 gives its area-weighted global mean.
@@ -684,10 +680,10 @@ python scripts/run_regressions.py          # data/output/regression/<predictand>
 python scripts/plot_predictor_scatter.py   # data/output/regression/predictor_scatter.pdf
 python scripts/plot_scalar_timeseries.py   # data/output/regression/predictor_timeseries.pdf
 python scripts/plot_tglob_vs_amoc.py       # data/output/regression/tglob_vs_amoc.pdf (AMOC vs Tglob, 9 cases)
-python scripts/plot_warming_amoc_ratio.py  # data/output/regression/{tas,prc,pr}/decadal10/ratio_warming_over_slowdown_set5.pdf
+python scripts/plot_warming_amoc_ratio.py  # data/output/regression/<predictand>/decadal10/ratio_warming_over_slowdown_set5.pdf
 python scripts/plot_case_grid_book.py      # data/output/case_grid/<var>_2101-2150.pdf (3x3 case maps, one book per variable)
-python scripts/run_eof_regressions.py      # data/output/eof/{tas,prc,pr}/[decadal10/]{eof_patterns,pc_timeseries}.pdf, pc_regression_set*.nc
-python scripts/predict_scenarios.py        # data/output/scenarios/predicted_change_{tas,prc,pr}_set{5,10}.pdf
+python scripts/run_eof_regressions.py      # data/output/eof/<var>_pc.{pdf,nc}
+python scripts/predict_scenarios.py        # data/output/scenarios/predicted_change_<predictand>_set{5,10}.pdf
 python scripts/run_itcz_regressions.py     # data/output/itcz/{band20,band30}/[decadal10/]coef_table_*.csv, itcz_fit_set*.nc
 python scripts/plot_itcz_regressions.py    # data/output/itcz/{band20,band30}/{itcz_timeseries,itcz_scatter}.pdf
 ```
@@ -699,9 +695,14 @@ ten sets and `--do-annuals` to also produce the annual (interannual) variant (th
 compose). `predict_scenarios.py` uses sets 5 & 10 from the decadal10 run, so it needs
 only the default run.
 
-**Quick test runs (`--variables`).** The two scripts that loop over every analysis
-variable, `run_regressions.py` and `plot_case_grid_book.py`, take `--variables`
-with one or more named sets (`data_loader.VARIABLE_SETS`) and/or variable names:
+**Variable sets (`--variables`).** Every script that makes per-variable output --
+`run_regressions.py`, `plot_warming_amoc_ratio.py`, `plot_case_grid_book.py`,
+`run_eof_regressions.py`, `predict_scenarios.py` -- takes `--variables` with one or
+more named sets (`data_loader.VARIABLE_SETS`) and/or variable names, default `all`.
+`plot_warming_amoc_ratio.py`, `run_eof_regressions.py` and `predict_scenarios.py`
+read the matching `run_regressions.py` output, so run that with the same set first.
+The ITCZ scripts work on the scalar precipitation-centroid latitude, not per-variable
+fields, so they have no `--variables`.
 
 | Set | Variables | `run_regressions.py` / `plot_case_grid_book.py` time |
 | --- | --- | --- |
@@ -715,8 +716,7 @@ python scripts/plot_case_grid_book.py --variables key SHFLX   # sets and names m
 ```
 
 Every output is per variable, so a subset run simply rewrites that subset's files
-and leaves the others alone. The other scripts already use only `tas`, `pr` (and
-`prc`), so they need no flag. A full run of everything takes
+and leaves the others alone. A full run of everything takes
 about 11 minutes at low priority, mostly figure rendering (the fits take ~1 s per
 variable), with peak memory under 2 GB.
 

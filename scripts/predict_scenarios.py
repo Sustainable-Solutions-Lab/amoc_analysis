@@ -1,8 +1,8 @@
 """Predicted decadal-mean field changes on a warming x AMOC-decline grid.
 
 Uses the decadal (10-year block-mean) pooled regressions in
-``data/output/regression/<predictand>/decadal10/`` to map predicted changes in the
-gridded tas, prc (convective precip), and pr (total precip) fields, for set 5
+``data/output/regression/<predictand>_coef.nc`` to map predicted changes in the
+gridded predictand fields (``--variables``, default all), for set 5
 (Tglob + AMOC) and set 10 (Tglob + AMOC + Tglob*AMOC interaction).
 
 Addresses: where does an AMOC decline exacerbate vs. ameliorate the response to
@@ -36,11 +36,12 @@ the intercept cancels. Set 5 uses raw predictors; set 10 uses the centered colum
 from the coef file's ``centering_mean_*`` attributes, with the interaction term
 formed per state. All panels for a predictand, in both sets, share one symmetric
 color scale, so set 5 and set 10 compare directly. One single-page PDF per
-predictand and set: ``data/output/scenarios/predicted_change_<predictand>_set<N>.pdf``.
+predictand, one page per set: ``data/output/scenarios/<predictand>_scenarios.pdf``.
 
-    python scripts/predict_scenarios.py
+    python scripts/predict_scenarios.py [--variables minimal | tas pr ...]
 """
 
+import argparse
 import os
 import sys
 
@@ -48,24 +49,21 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import numpy as np
 import xarray as xr
+from matplotlib.backends.backend_pdf import PdfPages
 
 import data_loader as dl
 import regression as reg
 from output import label_with_units, plot_map_grid, symmetric_bound, value_with_units
 
-REG_BASE = os.path.join(dl._REPO_ROOT, "data", "output", "regression")
+REG_DIR = os.path.join(dl._REPO_ROOT, "data", "output", "regression")
 OUT_DIR = os.path.join(dl._REPO_ROOT, "data", "output", "scenarios")
 
 BASELINE_CASE = "1xCO2"
 WARMING_K = 3.0
 AMOC_STRONG_SV = 20.0
 AMOC_WEAK_SV = 6.0
-PREDICTAND_NAMES = ["tas", "prc", "pr"]
 
-SET_FILES = {
-    5: "coef_set5_Tglob-AMOC.nc",
-    10: "coef_set10_Tglob-AMOC-TglobxAMOC.nc",
-}
+SET_NUMBERS = [5, 10]
 
 WARM = f"+{WARMING_K:g} K"
 AMOC_DROP = f"AMOC {AMOC_STRONG_SV:g}→{AMOC_WEAK_SV:g} Sv"
@@ -140,36 +138,40 @@ def grid_panels(coef, set_num, state, mT, mA):
 def run_for_predictand(name, state):
     predictand = reg.PREDICTANDS[name]
     units, cmap = predictand["units"], predictand["cmap"]
-    dsets = {s: xr.open_dataset(os.path.join(REG_BASE, name, "decadal10", f))
-             for s, f in SET_FILES.items()}
+    coef_path = os.path.join(REG_DIR, f"{name}_coef.nc")
+    dsets = {s: xr.open_dataset(coef_path, group=reg.set_group(s)) for s in SET_NUMBERS}
     mT = float(dsets[10].attrs["centering_mean_Tglob_K"])
     mA = float(dsets[10].attrs["centering_mean_AMOC_Sv"])
     print(f"[{name}] set-10 centering: Tglob={mT:.3f} K, AMOC={mA:.3f} Sv")
 
-    panels = {s: grid_panels(dsets[s]["coef"], s, state, mT, mA) for s in SET_FILES}
+    panels = {s: grid_panels(dsets[s]["coef"], s, state, mT, mA) for s in SET_NUMBERS}
     bound = symmetric_bound(np.concatenate(
         [field.values.ravel() for grid in panels.values() for _, field in grid.values()]))
-    for set_num, grid in panels.items():
-        for cell, (title, field) in sorted(grid.items()):
-            print(f"[{name}] set {set_num} {cell}: {title}: global mean "
-                  + value_with_units(f"{float(dl.global_mean(field)):.4g}", units))
-        out_path = os.path.join(OUT_DIR, f"predicted_change_{name}_set{set_num}.pdf")
-        plot_map_grid(
-            grid, (3, 3),
-            title=(f"Predicted decadal-mean Δ{name}, set {set_num} "
-                   f"({'Tglob + AMOC' if set_num == 5 else 'Tglob + AMOC + Tglob·AMOC'}); "
-                   f"rows: warming, columns: AMOC decline"),
-            units=label_with_units(f"Δ{name}", units), cmap=cmap, bound=bound, out_path=out_path,
-        )
-        print(f"wrote {out_path}")
+    out_path = os.path.join(OUT_DIR, f"{name}_scenarios.pdf")
+    with PdfPages(out_path) as pdf:
+        for set_num, grid in panels.items():
+            for cell, (title, field) in sorted(grid.items()):
+                print(f"[{name}] set {set_num} {cell}: {title}: global mean "
+                      + value_with_units(f"{float(dl.global_mean(field)):.4g}", units))
+            plot_map_grid(
+                grid, (3, 3),
+                title=(f"Predicted decadal-mean Δ{name}, set {set_num} "
+                       f"({'Tglob + AMOC' if set_num == 5 else 'Tglob + AMOC + Tglob·AMOC'}); "
+                       f"rows: warming, columns: AMOC decline"),
+                units=label_with_units(f"Δ{name}", units), cmap=cmap, bound=bound, pdf=pdf,
+            )
+    print(f"wrote {out_path}")
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    dl.add_variables_argument(parser)
+    args = parser.parse_args()
     os.makedirs(OUT_DIR, exist_ok=True)
     state = states()
     for label, (t, a) in state.items():
         print(f"{label:10s}: Tglob={t:.3f} K, AMOC={a:.2f} Sv")
-    for name in PREDICTAND_NAMES:
+    for name in dl.resolve_variables(args.variables):
         run_for_predictand(name, state)
 
 

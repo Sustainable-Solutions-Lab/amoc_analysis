@@ -38,10 +38,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--vector", action="store_true",
                         help="draw map fields as vector graphics (large PDF)")
-    parser.add_argument("--variables", nargs="+", default=["all"],
-                        choices=list(dl.VARIABLE_SETS), metavar="NAME",
-                        help="set names (minimal, key, all) and/or variable names "
-                             "(default: all)")
+    dl.add_variables_argument(parser)
     args = parser.parse_args()
     variables = dl.resolve_variables(args.variables)
 

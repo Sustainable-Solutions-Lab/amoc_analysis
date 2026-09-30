@@ -1,15 +1,21 @@
-"""EOF / principal-component analysis of pooled gridded fields (additive path).
+"""EOF / principal-component analysis of pooled decadal-mean gridded fields.
 
-For each predictand (tas, prc, pr): compute area-weighted covariance EOFs of the
-grand-mean anomalies over the pooled AMOC-complete sample, plot the leading EOF
-patterns, plot the principal-component (EOF weighting) time series per simulation,
-and regress the leading PCs (>=95% variance) on each selected predictor set, saving
-the PC-space regression coefficients. Complements scripts/run_regressions.py. By
-default only sets 5 & 10 are run (pass ``--all-sets`` for all ten) and only the
-decadal10 smoothing (pass ``--do-annuals`` to also run the annual variant,
-'annual' (interannual, <predictand>/); decadal10 writes to <predictand>/decadal10/).
+For each predictand (``--variables``, default all): compute area-weighted
+covariance EOFs of the grand-mean anomalies of the pooled decadal-mean sample
+(10-year block means per run), plot the leading EOF patterns, and regress the
+retained PCs on each selected predictor set. Complements scripts/run_regressions.py.
+By default only sets 5 & 10 are run (pass ``--all-sets`` for all ten).
 
-    python scripts/run_eof_regressions.py [--all-sets] [--do-annuals]
+Outputs, flat in ``data/output/eof/``:
+
+- ``<var>_pc.pdf`` -- EOF patterns + scree, then one PC-regression page per
+  predictor set, then one fitted-vs-actual PC page per richer set (6, 9, 10) fit.
+- ``<var>_pc.nc`` -- the PC-space regression of every set fit, one NetCDF group
+  per set (``set5``, ``set10``, ...; ``regression.set_group``): ``coef``, ``se``,
+  ``tstat``, ``pvalue`` on ``(param, mode)`` and ``r2`` on ``mode``.
+- ``README.txt`` -- the caveats below (shared by all variables).
+
+    python scripts/run_eof_regressions.py [--all-sets] [--variables minimal | tas pr ...]
 """
 
 import argparse
@@ -27,11 +33,9 @@ from output import (
     plot_eof_patterns,
     plot_pc_prediction,
     plot_pc_regression,
-    plot_pc_timeseries,
 )
 
-OUT_BASE = os.path.join(dl._REPO_ROOT, "data", "output", "eof")
-PREDICTAND_NAMES = ["tas", "prc", "pr"]
+OUT_DIR = os.path.join(dl._REPO_ROOT, "data", "output", "eof")
 # Retain leading EOFs until cumulative variance reaches VARIANCE_THRESHOLD, but
 # never keep a mode explaining less than MIN_VARIANCE_FRACTION (drops the noise
 # tail; the more restrictive rule wins).
@@ -39,47 +43,42 @@ VARIANCE_THRESHOLD = 0.95
 MIN_VARIANCE_FRACTION = 0.01
 
 
-CAVEATS = """EOF / principal-component analysis outputs (additive to the direct maps).
+CAVEATS = """EOF / principal-component analysis of decadal-mean fields.
 
-- Area-weighted covariance EOFs of grand-mean anomalies over the pooled
-  AMOC-complete sample (4 simulations). Modes are truncated by two rules (more
-  restrictive wins): keep until cumulative variance >= 95%, but never keep a mode
-  explaining < 1% of variance (drops the low-variance noise tail).
-- Outputs (all variants): eof_patterns.pdf (leading EOF maps + scree),
-  pc_timeseries.pdf (the EOF weightings / PCs over time, one panel per simulation),
-  and pc_regression_set{N}_*.nc (OLS of the PCs on each predictor set:
-  coef/se/t/p/r2 in PC space). The spatial fingerprint maps (Sum_k beta_k * EOF_k)
-  are intentionally NOT produced.
-- DECADAL variant only also gets figures of the PC-on-scalar regression -- the EOF
-  analog of the 2D coefficient maps with the mode index replacing (lat, lon):
-    * pc_regression.pdf -- one PAGE per predictor set; each page has one panel per
-      EOF mode, a bar per predictor showing the STANDARDIZED coefficient
-      beta*sigma(x)/sigma(PC) with +/-SE; faded bars are not significant (p>0.05);
-      panel title shows R^2 and % var. Standardizing makes bars comparable across
-      modes (raw coefs scale with each PC's amplitude). t/p are scale-invariant
-      (same as the per-set pc_regression_set{N}_*.nc files).
-    * pc_prediction.pdf -- one PAGE per richer set among (6, 9, 10) that was fit
-      (only set 10 by default; all three with --all-sets): fitted (X*beta) vs actual
-      PC over time per simulation, a direct view of how well the scalars predict
-      each weighting.
-- Smoothing: 'decadal10' (decadal10/ subdir) = 10-year block means per run/segment
-  before pooling, produced by default; 'annual' (interannual, this directory) only
-  with --do-annuals.
-- Annual tas is strongly low-rank (2 modes >=95%); annual prc is not
-  (237 modes); decadal smoothing removes the high-frequency noise and lowers the
-  retained-mode count (reported at run time).
-- p-values are nominal OLS; 'annual' is autocorrelation-optimistic, 'decadal10'
-  (~independent decadal samples) is far more trustworthy.
+- Sample: each run's AMOC-present years (2051-2150 for all nine CO2 x hosing runs)
+  are reduced to non-overlapping 10-year block means, and the decadal means of all
+  runs are pooled (9 runs x 10 decades = 90 samples). The EOFs are area-weighted
+  covariance EOFs of the anomalies from the pooled grand mean.
+- Mode truncation (the more restrictive rule wins): keep modes until cumulative
+  variance >= 95%, but never keep a mode explaining < 1% of variance. For noisy
+  fields the 1% floor stops first, so fewer than 95% of the variance is retained
+  (e.g. pr: 7 modes, ~85%); the retained count and variance are printed at run
+  time and shown in the scree panel.
+- Files (flat in this directory, one pair per variable):
+    * <var>_pc.pdf -- page 1: the leading EOF patterns (at most 9 mapped) and a
+      scree of variance explained. Then one page per predictor set: the
+      PC-on-scalar regression, one panel per retained mode, a bar per predictor
+      showing the STANDARDIZED coefficient beta*sigma(x)/sigma(PC) with +/-SE;
+      faded bars are not significant (p > 0.05); panel titles give R^2 and % var.
+      Standardizing makes bars comparable across modes (raw coefs scale with each
+      PC's amplitude). Then one page per richer set among (6, 9, 10) that was fit
+      (only set 10 by default; all three with --all-sets): fitted (X*beta) vs
+      actual PC over time per run.
+    * <var>_pc.nc -- the raw (unstandardized) PC-space OLS of every set fit, one
+      NetCDF group per set (set5, set10, ...): coef/se/tstat/pvalue on
+      (param, mode) and r2 on mode. Read with xr.open_dataset(path, group="set5").
+      t and p are scale-invariant, so they match the standardized bars.
+- The spatial fingerprint maps (Sum_k beta_k * EOF_k) are intentionally NOT
+  produced; scripts/run_regressions.py maps the per-grid-point regressions.
+- p-values are nominal OLS on the 90 decadal samples. Decadal means within a run
+  are still autocorrelated (the runs drift toward equilibrium), so they are
+  somewhat optimistic.
 """
 
 
-def run_for_predictand(name, smoothing, all_sets):
+def run_for_predictand(name, all_sets):
     predictand = reg.PREDICTANDS[name]
-    tag = smoothing["tag"]
-    out_dir = os.path.join(OUT_BASE, name, smoothing["subdir"])
-    os.makedirs(out_dir, exist_ok=True)
-
-    predictors, response = reg.build_pooled(predictand=predictand, block=smoothing["block"])
+    predictors, response = reg.build_pooled(predictand=predictand, block=reg.DECADAL_BLOCK)
     predictors = reg.add_orthogonalized_columns(predictors)
     predictors = reg.add_quadratic_columns(predictors)
 
@@ -87,61 +86,42 @@ def run_for_predictand(name, smoothing, all_sets):
         response, variance_threshold=VARIANCE_THRESHOLD,
         min_variance_fraction=MIN_VARIANCE_FRACTION,
     )
-    n = eof_ds.attrs["n_modes"]
-    print(f"\n[{name}/{tag}] pooled n={predictors.sizes['sample']}; {n} EOF modes retained "
-          f"(cum var {eof_ds.attrs['total_variance_fraction'] * 100:.1f}%); "
-          f"leading % = {(eof_ds['variance_fraction'].values[:6] * 100).round(1)}")
-
-    pat_units = predictand["units"]
-    plot_eof_patterns(
-        eof_ds, f"EOF patterns: {name} ({tag} anomalies)", pat_units,
-        os.path.join(out_dir, "eof_patterns.pdf"),
-        cmap=predictand.get("cmap", "RdBu_r"),
-    )
-    plot_pc_timeseries(
-        eof_ds, f"EOF weightings (PCs) over time: {name} ({tag})",
-        os.path.join(out_dir, "pc_timeseries.pdf"),
-    )
-
-    decadal = smoothing["block"] is not None  # the focus variant gets figures
     var_frac = eof_ds["variance_fraction"].values
-    # One multi-page PDF collects every set's regression figure (one page per set).
-    reg_pdf = PdfPages(os.path.join(out_dir, "pc_regression.pdf")) if decadal else None
-    fits = {}
-    for set_def in reg.select_predictor_sets(all_sets):
-        num = set_def["number"]
-        names = set_def["predictors"]
-        pc_fit = eof.fit_pcs(predictors[names], eof_ds["pcs"])
-        fits[num] = (pc_fit, names)
-        labels = "-".join(reg.PREDICTORS[p]["tag"] for p in names)
-        plabels = ", ".join(reg.PREDICTORS[p]["label"] for p in names)
-        pc_fit[["coef", "se", "tstat", "pvalue", "r2"]].to_netcdf(
-            os.path.join(out_dir, f"pc_regression_set{num}_{labels}.nc"))
-        if decadal:
+    print(f"\n[{name}] pooled n={predictors.sizes['sample']}; {eof_ds.attrs['n_modes']} "
+          f"EOF modes retained (cum var {eof_ds.attrs['total_variance_fraction'] * 100:.1f}%); "
+          f"leading % = {(var_frac[:6] * 100).round(1)}")
+
+    fits = {set_def["number"]: (eof.fit_pcs(predictors[set_def["predictors"]], eof_ds["pcs"]),
+                                set_def["predictors"])
+            for set_def in reg.select_predictor_sets(all_sets)}
+
+    pdf_path = os.path.join(OUT_DIR, f"{name}_pc.pdf")
+    with PdfPages(pdf_path) as pdf:
+        plot_eof_patterns(
+            eof_ds, f"EOF patterns: {name} (decadal-mean anomalies)", predictand["units"],
+            cmap=predictand["cmap"], pdf=pdf,
+        )
+        for num, (pc_fit, names) in fits.items():
+            plabels = ", ".join(reg.PREDICTORS[p]["label"] for p in names)
             plot_pc_regression(
                 pc_fit, predictors[names], eof_ds["pcs"],
-                f"PC regression: {name} ({tag}) — set {num}: {plabels}",
-                variance_fraction=var_frac, pdf=reg_pdf,
+                f"PC regression: {name} (decadal means) — set {num}: {plabels}",
+                variance_fraction=var_frac, pdf=pdf,
             )
-        print(f"[{name}/{tag}] set {num} ({labels}) regressed")
-
-    # Direct "predict the weightings" view for the richer sets (full 3-index,
-    # quadratic, and Tglob×AMOC interaction): fitted vs actual PC over time, one
-    # page per set, decadal only. Restricted to the sets actually fit (so the
-    # default sets-5-&-10 run renders only set 10 here, --all-sets renders 6, 9, 10).
-    if decadal:
-        reg_pdf.close()
-        with PdfPages(os.path.join(out_dir, "pc_prediction.pdf")) as pred_pdf:
-            for num in (n for n in (6, 9, 10) if n in fits):
-                pc_fit, names = fits[num]
-                plot_pc_prediction(
-                    eof_ds, pc_fit, predictors[names],
-                    f"PC fitted vs actual: {name} ({tag}) — set {num}",
-                    pdf=pred_pdf,
-                )
-
-    with open(os.path.join(out_dir, "README.txt"), "w") as f:
-        f.write(CAVEATS)
+        # Fitted vs actual PCs for the richer sets that were fit (full 3-index,
+        # quadratic, Tglob×AMOC interaction): only set 10 by default.
+        for num in (n for n in (6, 9, 10) if n in fits):
+            pc_fit, names = fits[num]
+            plot_pc_prediction(
+                eof_ds, pc_fit, predictors[names],
+                f"PC fitted vs actual: {name} (decadal means) — set {num}",
+                pdf=pdf,
+            )
+    nc_path = os.path.join(OUT_DIR, f"{name}_pc.nc")
+    reg.write_set_fits(nc_path, {
+        num: pc_fit[["coef", "se", "tstat", "pvalue", "r2"]].assign_attrs(predictors=", ".join(names))
+        for num, (pc_fit, names) in fits.items()})
+    print(f"[{name}] wrote {pdf_path}\n[{name}] wrote {nc_path}")
 
 
 def main():
@@ -150,15 +130,13 @@ def main():
         "--all-sets", action="store_true",
         help="regress on all ten predictor sets (default: only sets 5 & 10)",
     )
-    parser.add_argument(
-        "--do-annuals", action="store_true",
-        help="also run the annual (interannual) variant (default: decadal10 only)",
-    )
+    dl.add_variables_argument(parser)
     args = parser.parse_args()
-    for name in PREDICTAND_NAMES:
-        for smoothing in reg.select_smoothings(args.do_annuals):
-            run_for_predictand(name, smoothing, args.all_sets)
-    print(f"\nDone. Outputs in {OUT_BASE}/<predictand>/[decadal10/]")
+    os.makedirs(OUT_DIR, exist_ok=True)
+    with open(os.path.join(OUT_DIR, "README.txt"), "w") as f:
+        f.write(CAVEATS)
+    for name in dl.resolve_variables(args.variables):
+        run_for_predictand(name, args.all_sets)
 
 
 if __name__ == "__main__":

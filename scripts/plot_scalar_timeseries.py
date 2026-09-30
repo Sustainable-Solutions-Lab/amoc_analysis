@@ -24,7 +24,7 @@ OUT_DIR = os.path.join(dl._REPO_ROOT, "data", "output", "regression")
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
     annual, _ = reg.build_pooled()  # predictand irrelevant for the scalar predictors
-    decadal, _ = reg.build_pooled(block=10)
+    decadal, _ = reg.build_pooled(block=reg.DECADAL_BLOCK)
     out_path = os.path.join(OUT_DIR, "predictor_timeseries.pdf")
     plot_scalar_timeseries(
         annual, decadal,

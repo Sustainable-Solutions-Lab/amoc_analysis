@@ -22,7 +22,7 @@ OUT_DIR = os.path.join(dl._REPO_ROOT, "data", "output", "regression")
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
     annual, _ = reg.build_pooled()  # predictand is irrelevant for the scalars
-    decadal, _ = reg.build_pooled(block=10)
+    decadal, _ = reg.build_pooled(block=reg.DECADAL_BLOCK)
     out_path = os.path.join(OUT_DIR, "tglob_vs_amoc.pdf")
     plot_tglob_vs_amoc(annual, decadal, out_path)
     print(f"wrote {out_path}  (annual n={annual.sizes['sample']}, "

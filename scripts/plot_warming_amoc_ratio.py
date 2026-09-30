@@ -1,6 +1,6 @@
 """Map the ratio of two per-grid-point response coefficients, per predictand.
 
-From each set-5 pooled regression ``Y ~ Tglob + AMOC`` (Y = tas, prc, or pr) this
+From each set-5 pooled regression ``Y ~ Tglob + AMOC`` (Y = each ``--variables`` predictand) this
 builds three maps:
 
   A = ∂Y/∂Tglob                  local Y change per K of global-mean warming  [Yunit/K]
@@ -19,16 +19,13 @@ the diverging color scale is clipped at a fixed ±RATIO_BOUND Sv/K so the
 singularities saturate rather than dominate. Negative/positive integer contours
 are drawn at ±1..±5 Sv/K.
 
-By default every predictand × smoothing variant is processed in one run:
+Reads the set-5 group of ``data/output/regression/<var>_coef.nc`` (from
+scripts/run_regressions.py) and writes ``<var>_ratio.{nc,pdf}`` beside it:
 
-    python scripts/plot_warming_amoc_ratio.py
-    python scripts/plot_warming_amoc_ratio.py --predictand tas --smoothing decadal10
-
-Writes ``ratio_warming_over_slowdown_set5.{nc,pdf}`` to each regression output dir.
+    python scripts/plot_warming_amoc_ratio.py [--variables minimal | tas pr ...]
 """
 
 import argparse
-import itertools
 import os
 import sys
 
@@ -43,10 +40,7 @@ from output import DATA_CRS, PROJECTION, centered_lon, draw_coastlines, draw_fie
 
 import matplotlib.pyplot as plt
 
-OUT_BASE = os.path.join(dl._REPO_ROOT, "data", "output", "regression")
-
-PREDICTANDS = ["tas", "prc", "pr"]
-SMOOTHINGS = ["", "decadal10"]  # "" = annual variant (predictand root dir)
+OUT_DIR = os.path.join(dl._REPO_ROOT, "data", "output", "regression")
 
 # Color-scale half-range for the ratio panel (Sv/K). The ratio is Sv of slowdown
 # per K of global warming; a realistic slowdown is well under ~10 Sv per K (AMOC
@@ -59,8 +53,9 @@ RATIO_LEVELS = [-5, -4, -3, -2, -1, 1, 2, 3, 4, 5]
 
 
 def build_ratio(coef_path):
-    """Return (A, B, ratio) DataArrays plus A/B p-values from a set-5 coef file."""
-    ds = xr.open_dataset(coef_path)
+    """Return (A, B, ratio) DataArrays plus A/B p-values from the set-5 group of a
+    ``<var>_coef.nc`` file."""
+    ds = xr.open_dataset(coef_path, group=reg.set_group(5))
     a = ds["coef"].sel(param="tas_global_mean")           # ∂Y/∂Tglob    [Yunit/K]
     a_p = ds["pvalue"].sel(param="tas_global_mean")
     b = -ds["coef"].sel(param="amoc_strength")            # ∂Y/∂slowdown [Yunit/Sv]
@@ -113,24 +108,20 @@ def plot(a, a_p, b, b_p, ratio, predictand, out_pdf):
     plt.close(fig)
 
 
-def process(predictand_name, smoothing):
-    """Build and write the ratio NetCDF + figure for one predictand/smoothing."""
-    out_dir = os.path.join(OUT_BASE, predictand_name, smoothing)
-    coef_path = os.path.join(out_dir, "coef_set5_Tglob-AMOC.nc")
-    if not os.path.exists(coef_path):
-        print(f"skip {predictand_name}/{smoothing or 'annual'}: no {os.path.basename(coef_path)}")
-        return
+def process(predictand_name):
+    """Build and write the ratio NetCDF + figure for one predictand."""
+    coef_path = os.path.join(OUT_DIR, f"{predictand_name}_coef.nc")
     a, a_p, b, b_p, ratio = build_ratio(coef_path)
 
-    out_nc = os.path.join(out_dir, "ratio_warming_over_slowdown_set5.nc")
-    out_pdf = os.path.join(out_dir, "ratio_warming_over_slowdown_set5.pdf")
+    out_nc = os.path.join(OUT_DIR, f"{predictand_name}_ratio.nc")
+    out_pdf = os.path.join(OUT_DIR, f"{predictand_name}_ratio.pdf")
     ratio.attrs = {
         "long_name": "warming response over AMOC-slowdown response",
         "units": "Sv K-1",
         "description": ("(dY/dTglob) / (-dY/dAMOC): Sv of AMOC slowdown producing "
                         "the local change in Y of 1 K global-mean warming"),
         "predictand": predictand_name,
-        "source": os.path.basename(coef_path),
+        "source": f"{os.path.basename(coef_path)}, group {reg.set_group(5)}",
     }
     ratio.to_dataset().to_netcdf(out_nc)
     plot(a, a_p, b, b_p, ratio, reg.PREDICTANDS[predictand_name], out_pdf)
@@ -139,16 +130,10 @@ def process(predictand_name, smoothing):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--predictand", choices=PREDICTANDS, default=None,
-                        help="default: all of %s" % PREDICTANDS)
-    parser.add_argument("--smoothing", choices=SMOOTHINGS, default=None,
-                        help="'' = annual, 'decadal10' = decadal; default: both")
+    dl.add_variables_argument(parser)
     args = parser.parse_args()
-
-    predictands = [args.predictand] if args.predictand else PREDICTANDS
-    smoothings = [args.smoothing] if args.smoothing is not None else SMOOTHINGS
-    for predictand_name, smoothing in itertools.product(predictands, smoothings):
-        process(predictand_name, smoothing)
+    for predictand_name in dl.resolve_variables(args.variables):
+        process(predictand_name)
 
 
 if __name__ == "__main__":

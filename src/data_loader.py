@@ -172,6 +172,16 @@ def resolve_variables(names):
     return list(dict.fromkeys(var for name in names for var in VARIABLE_SETS[name]))
 
 
+def add_variables_argument(parser):
+    """Add the shared ``--variables`` option (``VARIABLE_SETS`` names, default
+    ``all``) to an ``argparse`` parser; expand it with ``resolve_variables``."""
+    parser.add_argument(
+        "--variables", nargs="+", default=["all"], choices=list(VARIABLE_SETS),
+        metavar="NAME",
+        help="set names (minimal, key, all) and/or variable names (default: all)",
+    )
+
+
 
 # One input file per simulation, in case-grid order (see ``CASE_GRID``), with
 # the run's column label in ``AMOC_FILE``.

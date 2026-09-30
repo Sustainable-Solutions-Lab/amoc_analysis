@@ -238,7 +238,8 @@ def plot_set(fit, set_def, run_label, pdf, predictand, centering=None):
     _save_figure(fig, pdf=pdf)
 
 
-def plot_eof_patterns(eof_ds, title, units, out_path, cmap="RdBu_r", max_patterns=9):
+def plot_eof_patterns(eof_ds, title, units, out_path=None, cmap="RdBu_r", max_patterns=9,
+                      pdf=None):
     """Map the leading EOF spatial patterns plus a scree panel of variance explained.
 
     ``eof_ds`` is the Dataset from ``eof.compute_eofs``. Patterns use a symmetric
@@ -247,6 +248,7 @@ def plot_eof_patterns(eof_ds, title, units, out_path, cmap="RdBu_r", max_pattern
     95% threshold — mapping them all is unreadable and the regression uses every
     retained mode regardless). The final panel is a scree: a per-mode bar when the
     modes are few, otherwise a cumulative-variance curve marking the retained count.
+    Written to ``out_path`` or appended as a page of ``pdf`` (see ``_save_figure``).
     """
     eofs = eof_ds["eofs"]
     n = eofs.sizes["mode"]
@@ -277,48 +279,7 @@ def plot_eof_patterns(eof_ds, title, units, out_path, cmap="RdBu_r", max_pattern
                  f"mapped leading {n_plot}", fontsize=9)
     fig.suptitle(title, fontsize=12)
     fig.tight_layout(rect=(0, 0, 1, 0.97))
-    fig.savefig(out_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
-
-
-def plot_pc_timeseries(eof_ds, title, out_path, max_modes=4):
-    """Time series of the EOF weightings (PCs) vs year, one panel per simulation.
-
-    Each panel plots the leading ``max_modes`` principal components against that
-    run's own years; line breaks are inserted across any year gaps (a
-    discontinuity left by dropping NaN years) so segments aren't joined across them.
-    """
-    pcs = eof_ds["pcs"]
-    years = eof_ds["sample"].values
-    run_of = eof_ds["run"].values
-    runs = list(dict.fromkeys(run_of))
-    n_modes = min(pcs.sizes["mode"], max_modes)
-
-    fig, axes = plt.subplots(len(runs), 1, figsize=(10, 2.6 * len(runs)), squeeze=False)
-    for ax, run in zip(axes[:, 0], runs):
-        m = run_of == run
-        order = np.argsort(years[m])
-        yr = years[m][order].astype(float)
-        # Break lines only across a genuine gap, scaled to the sampling interval
-        # (annual: spacing 1, decadal blocks: ~10), so a gap within a run still
-        # breaks but regular decadal steps stay connected.
-        d = np.diff(yr)
-        thresh = 1.5 * np.median(d) if d.size else np.inf
-        gaps = np.where(d > thresh)[0] + 1
-        yr_b = np.insert(yr, gaps, np.nan)
-        for k in range(n_modes):
-            v = pcs.isel(mode=k).values[m][order]
-            ax.plot(yr_b, np.insert(v, gaps, np.nan), lw=1.0, label=f"PC{k + 1}")
-        ax.axhline(0, color="k", lw=0.5)
-        ax.set_title(run, fontsize=10)
-        ax.set_ylabel("PC amplitude")
-        ax.grid(alpha=0.3)
-    axes[0, 0].legend(fontsize=8, ncol=n_modes, loc="best")
-    axes[-1, 0].set_xlabel("year")
-    fig.suptitle(title, fontsize=12)
-    fig.tight_layout(rect=(0, 0, 1, 0.97))
-    fig.savefig(out_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
+    _save_figure(fig, out_path=out_path, pdf=pdf)
 
 
 def plot_pc_regression(pc_fit, predictors, pcs, title, out_path=None,
@@ -384,8 +345,8 @@ def plot_pc_prediction(eof_ds, pc_fit, predictors, title, out_path=None,
     A direct view of how well the scalar predictors reproduce each EOF weighting:
     the fitted PC is ``intercept + Σⱼ βⱼ xⱼ`` in raw PC units. The leading
     ``max_modes`` modes are drawn (solid = actual, dashed = fitted) on one panel
-    per run; line breaks follow genuine year gaps exactly as in
-    ``plot_pc_timeseries``. ``predictors`` must contain the regressed columns.
+    per run; lines break across genuine year gaps but stay connected across
+    regular decadal steps. ``predictors`` must contain the regressed columns.
     """
     pcs = eof_ds["pcs"]
     years = eof_ds["sample"].values
@@ -525,7 +486,7 @@ def plot_predictor_scatter(predictors, out_path):
     plt.close(fig)
 
 
-def plot_itcz_timeseries(annual, decadal, title, out_path):
+def plot_itcz_timeseries(annual, decadal, title, out_path=None, pdf=None):
     """Per-simulation time series of the ITCZ latitude (``precip_max_lat``).
 
     One panel per simulation; annual values as a thin line and decadal block means
@@ -561,11 +522,10 @@ def plot_itcz_timeseries(annual, decadal, title, out_path):
     axes[0, 0].legend(handles=handles, fontsize=8, ncol=2, loc="best")
     fig.suptitle(title, fontsize=12)
     fig.tight_layout(rect=(0, 0, 1, 0.97))
-    fig.savefig(out_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
+    _save_figure(fig, out_path, pdf)
 
 
-def plot_itcz_predicted_vs_observed(observed, run_of, panels, title, out_path):
+def plot_itcz_predicted_vs_observed(observed, run_of, panels, title, out_path=None, pdf=None):
     """Predicted vs observed ITCZ latitude for one or more multi-predictor fits.
 
     One subplot per entry of ``panels`` (each a dict with ``label``, ``predicted``
@@ -599,11 +559,10 @@ def plot_itcz_predicted_vs_observed(observed, run_of, panels, title, out_path):
     axes[0, 0].legend(fontsize=8, markerscale=1.6, title="simulation")
     fig.suptitle(title, fontsize=12)
     fig.tight_layout(rect=(0, 0, 1, 0.94))
-    fig.savefig(out_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
+    _save_figure(fig, out_path, pdf)
 
 
-def plot_itcz_coefficients(panels, title, out_path):
+def plot_itcz_coefficients(panels, title, out_path=None, pdf=None):
     """Partial-slope bar charts (coef ± SE) for one or more multi-predictor fits.
 
     One subplot per entry of ``panels`` (each a dict with ``label`` and equal-length
@@ -638,11 +597,10 @@ def plot_itcz_coefficients(panels, title, out_path):
     axes[0, 0].legend(handles=handles, fontsize=7, loc="best")
     fig.suptitle(title, fontsize=12)
     fig.tight_layout(rect=(0, 0, 1, 0.92))
-    fig.savefig(out_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
+    _save_figure(fig, out_path, pdf)
 
 
-def plot_itcz_scatter(predictors, response, fits, single_vars, title, out_path):
+def plot_itcz_scatter(predictors, response, fits, single_vars, title, out_path=None, pdf=None):
     """ITCZ latitude vs each single predictor: scatter, OLS line, 95% CI band.
 
     One panel per variable in ``single_vars`` (the single-predictor sets: Tglob,
@@ -695,8 +653,7 @@ def plot_itcz_scatter(predictors, response, fits, single_vars, title, out_path):
     axes[0, 0].legend(fontsize=8, markerscale=1.6, title="simulation")
     fig.suptitle(title, fontsize=12)
     fig.tight_layout(rect=(0, 0, 1, 0.95))
-    fig.savefig(out_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
+    _save_figure(fig, out_path, pdf)
 
 
 def plot_tglob_vs_amoc(annual, decadal, out_path):
@@ -779,8 +736,9 @@ def plot_case_grid_page(field, title, cmap, vmin, vmax, pdf, rasterized):
     _save_figure(fig, pdf=pdf, dpi=CASE_GRID_RASTER_DPI)
 
 
-def plot_map_grid(panels, shape, title, units, cmap, bound, out_path):
-    """One-page PDF of maps on a ``shape`` (rows, cols) grid sharing one color scale.
+def plot_map_grid(panels, shape, title, units, cmap, bound, out_path=None, pdf=None):
+    """One page of maps on a ``shape`` (rows, cols) grid sharing one color scale,
+    written to ``out_path`` or appended to ``pdf`` (see ``_save_figure``).
 
     ``panels`` maps ``(row, col)`` to ``(panel title, (lat, lon) DataArray)``;
     grid cells not in ``panels`` are left blank. The symmetric scale is
@@ -804,7 +762,7 @@ def plot_map_grid(panels, shape, title, units, cmap, bound, out_path):
                         pad=0.02, aspect=40)
     cbar.set_label(units)
     fig.suptitle(title, fontsize=12)
-    _save_figure(fig, out_path=out_path, dpi=CASE_GRID_RASTER_DPI)
+    _save_figure(fig, out_path=out_path, pdf=pdf, dpi=CASE_GRID_RASTER_DPI)
 
 
 def plot_case_grid_book(grid, pdf, rasterized):
