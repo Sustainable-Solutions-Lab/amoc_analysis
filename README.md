@@ -766,9 +766,3 @@ scalar regressions (`scripts/run_itcz_regressions.py`,
 `src/regression.py`, and `src/output.py`. The regression, EOF, and ITCZ analyses all
 use **decadal means** (10-year block means), and only sets 5 & 10 are fit unless
 `--all-sets` is given.
-
-## Legacy CESM1 code
-
-`src/amoc_cesm/` and its scripts come from the former `amoc-cesm` repository
-(CESM1 CO₂ × hosing factorial); the data they target is outmoded. See
-[`src/amoc_cesm/README.md`](src/amoc_cesm/README.md).
