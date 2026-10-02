@@ -10,6 +10,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import functools
+from collections import namedtuple
 
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
@@ -18,6 +19,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import shapely
 from matplotlib.lines import Line2D
+from matplotlib.patches import Patch
 from matplotlib.ticker import MaxNLocator
 from scipy import stats
 
@@ -145,6 +147,103 @@ def symmetric_bound(values):
     return float(np.nanpercentile(np.abs(values), 99))
 
 
+# Zonal-statistics plots: each map page is followed by a page of line plots laid
+# out panel for panel like it, showing the statistics over longitude at each
+# latitude (``data_loader.zonal_statistics``) on a sine-of-latitude axis, so equal
+# widths are equal areas. The statistics are told apart by line weight and fill,
+# never by dashes (dashes and dots mean 2x and 4xCO2 in the case line convention).
+# Case panels take their case's hosing color; other panels are ZONAL_NEUTRAL_COLOR.
+# Latitude ticks nearly evenly spaced in sin(latitude) (0, 0.26, 0.5, 0.77, 1), so
+# the pole labels have as much room as the rest (90° and 60° would crowd).
+SINE_LATITUDE_TICKS = [-90, -50, -30, -15, 0, 15, 30, 50, 90]
+ZONAL_STYLE = {
+    "mean": {"lw": 1.8},
+    "median": {"lw": 0.8},
+    "band": {"alpha": 0.2, "lw": 0},
+    "extremes": {"lw": 0.4, "alpha": 0.5},
+}
+ZONAL_NEUTRAL_COLOR = "black"
+ZONAL_LEGEND_COLOR = "0.3"
+ZONAL_PAD_FRACTION = 0.02  # y-range padding, as a fraction of the data span
+ZONAL_LEGEND_HANDLES = [
+    Line2D([], [], color=ZONAL_LEGEND_COLOR, label="mean", **ZONAL_STYLE["mean"]),
+    Line2D([], [], color=ZONAL_LEGEND_COLOR, label="median", **ZONAL_STYLE["median"]),
+    Patch(facecolor=ZONAL_LEGEND_COLOR, label="{:.0f}–{:.0f}% of cells".format(
+        *(100 * q for q in dl.ZONAL_BAND_QUANTILES)), **ZONAL_STYLE["band"]),
+    Line2D([], [], color=ZONAL_LEGEND_COLOR, label="min / max", **ZONAL_STYLE["extremes"]),
+]
+
+# One panel of a zonal-statistics page: ``field`` is a (lat, lon) DataArray and
+# ``ylim`` the (shared) y range.
+ZonalPanel = namedtuple("ZonalPanel", "title field color ylim ylabel")
+
+
+def latitude_label(lat):
+    """Tick label for latitude ``lat`` (deg): ``"60°S"``, ``"EQ"``, ``"60°N"``."""
+    return "EQ" if lat == 0 else f"{abs(lat)}°{'N' if lat > 0 else 'S'}"
+
+
+def set_sine_latitude_axis(ax):
+    """Scale the x axis of ``ax`` by sin(latitude), ticked and labeled in degrees."""
+    ax.set_xscale("function", functions=(
+        lambda lat: np.sin(np.deg2rad(lat)),
+        lambda sine: np.rad2deg(np.arcsin(np.clip(sine, -1, 1)))))
+    ax.set_xlim(-90, 90)
+    ax.set_xticks(SINE_LATITUDE_TICKS, [latitude_label(t) for t in SINE_LATITUDE_TICKS],
+                  fontsize=7)
+    ax.set_xlabel("latitude (sine scale)", fontsize=8)
+
+
+def draw_zonal_statistics(ax, field, color):
+    """Draw the zonal statistics of a ``(lat, lon)`` field on ``ax`` in ``color``:
+    the 5-95% band, min/max hairlines, the median and the mean, plus a zero line
+    (off-axis once a raw field's y range is set) on a sine-latitude axis."""
+    zonal = dl.zonal_statistics(field)
+    lat = zonal["lat"].values
+    ax.fill_between(lat, zonal["low"].values, zonal["high"].values, color=color,
+                    **ZONAL_STYLE["band"])
+    for extreme in ("min", "max"):
+        ax.plot(lat, zonal[extreme].values, color=color, **ZONAL_STYLE["extremes"])
+    ax.plot(lat, zonal["median"].values, color=color, **ZONAL_STYLE["median"])
+    ax.plot(lat, zonal["mean"].values, color=color, **ZONAL_STYLE["mean"])
+    ax.axhline(0, color="0.5", lw=0.5)
+    set_sine_latitude_axis(ax)
+    ax.tick_params(axis="y", labelsize=7)
+    ax.grid(alpha=0.3)
+
+
+def zonal_range(fields):
+    """Shared y range spanning the min and max of every field (NaN-safe), padded
+    by ``ZONAL_PAD_FRACTION`` of the span."""
+    low = min(float(field.min()) for field in fields)
+    high = max(float(field.max()) for field in fields)
+    pad = ZONAL_PAD_FRACTION * (high - low)
+    return low - pad, high + pad
+
+
+def plot_zonal_grid(panels, shape, title, pdf, panel_size=(5.0, 3.2)):
+    """One page of ``pdf``: zonal-statistics panels on a ``shape`` (rows, cols) grid,
+    each ``panel_size`` (width, height) inches.
+
+    ``panels`` maps ``(row, col)`` to a ``ZonalPanel``; grid cells not in
+    ``panels`` are left blank, mirroring the map page it follows.
+    """
+    fig, axes = plt.subplots(*shape, figsize=(panel_size[0] * shape[1], panel_size[1] * shape[0]),
+                             squeeze=False, layout="constrained")
+    for ax in axes.flat:
+        ax.set_visible(False)
+    for (i, j), panel in panels.items():
+        ax = axes[i, j]
+        ax.set_visible(True)
+        draw_zonal_statistics(ax, panel.field, panel.color)
+        ax.set_ylim(panel.ylim)
+        ax.set_ylabel(panel.ylabel, fontsize=8)
+        ax.set_title(panel.title, fontsize=9)
+    fig.legend(handles=ZONAL_LEGEND_HANDLES, loc="outside lower center", ncol=4, fontsize=8)
+    fig.suptitle(title, fontsize=12)
+    _save_figure(fig, pdf=pdf)
+
+
 def _save_figure(fig, out_path=None, pdf=None, dpi=300):
     """Write ``fig`` as a standalone PDF (``out_path``) or one page of ``pdf``.
 
@@ -195,10 +294,12 @@ def plot_coefficient_map(coef, pvalue, title, units, ax, cmap="RdBu_r", bound=No
 
 def plot_set(fit, set_def, run_label, pdf, predictand, centering=None):
     """Render all predictor coefficient maps for one regression set as one page of
-    ``pdf`` (an open ``PdfPages`` book, one page per set).
+    ``pdf`` (an open ``PdfPages`` book), followed by a page of their zonal
+    statistics in the same layout.
 
     One panel per predictor (the intercept is omitted). Stippling marks p > 0.05.
-    Panels whose coefficients carry the same units share one symmetric color scale.
+    Panels whose coefficients carry the same units share one symmetric color scale
+    and, on the zonal page, one y range.
     ``predictand`` is a ``regression.PREDICTANDS`` entry (label + units), used for
     titles and to form coefficient units ([predictand units] / [predictor units]).
     ``centering`` is the ``tag -> (mean, units)`` dict from
@@ -215,9 +316,10 @@ def plot_set(fit, set_def, run_label, pdf, predictand, centering=None):
     # Stack few panels in a single column; lay many (e.g. the 9-term set) on a grid.
     ncols = 3 if n > 4 else 1
     nrows = -(-n // ncols)
+    panel_size = (9.0, 4.0) if ncols == 1 else (6.0, 3.4)
     fig, axes = plt.subplots(
         nrows, ncols,
-        figsize=(9 if ncols == 1 else 6.0 * ncols, (4.0 if ncols == 1 else 3.4) * nrows),
+        figsize=(panel_size[0] * ncols, panel_size[1] * nrows),
         squeeze=False,
         subplot_kw={"projection": PROJECTION},
     )
@@ -229,12 +331,13 @@ def plot_set(fit, set_def, run_label, pdf, predictand, centering=None):
                     [fit["coef"].sel(param=name).values.ravel()
                      for name in predictors if units_of[name] == units]))
                 for units in set(units_of.values())}
+    title_of = {name: f"∂{plabel}/∂{PREDICTORS[name]['label']}  "
+                      f"({PREDICTORS[name]['label']} coefficient)" for name in predictors}
     for ax, name in zip(flat, predictors):
-        meta = PREDICTORS[name]
         plot_coefficient_map(
             fit["coef"].sel(param=name),
             fit["pvalue"].sel(param=name),
-            title=f"∂{plabel}/∂{meta['label']}  ({meta['label']} coefficient)",
+            title=title_of[name],
             units=units_of[name],
             ax=ax,
             cmap=cmap,
@@ -245,8 +348,9 @@ def plot_set(fit, set_def, run_label, pdf, predictand, centering=None):
     if centering:
         parts = ", ".join(f"{tag} = {mean:.4g} {units}" for tag, (mean, units) in centering.items())
         centering_line = f"\ncentering means (subtract before applying centered terms): {parts}"
+    set_title = f"Set {set_def['number']}: {plabel} ~ {preds}  |  {run_label}"
     fig.suptitle(
-        f"Set {set_def['number']}: {plabel} ~ {preds}  |  {run_label}\n"
+        f"{set_title}\n"
         f"stippling: p > {SIGNIFICANCE_P} (nominal OLS; autocorrelation not corrected)"
         f"{centering_line}",
         fontsize=11,
@@ -254,9 +358,22 @@ def plot_set(fit, set_def, run_label, pdf, predictand, centering=None):
     fig.tight_layout(rect=(0, 0, 1, 0.97))
     _save_figure(fig, pdf=pdf)
 
+    ylim_of = {units: zonal_range([fit["coef"].sel(param=name)
+                                   for name in predictors if units_of[name] == units])
+               for units in set(units_of.values())}
+    plot_zonal_grid(
+        {divmod(k, ncols): ZonalPanel(title_of[name], fit["coef"].sel(param=name),
+                                      ZONAL_NEUTRAL_COLOR, ylim_of[units_of[name]],
+                                      units_of[name])
+         for k, name in enumerate(predictors)},
+        (nrows, ncols),
+        f"{set_title}\nzonal statistics over longitude of the coefficients "
+        f"(all cells, significant or not){centering_line}",
+        pdf, panel_size,
+    )
 
-def plot_eof_patterns(eof_ds, title, out_path=None, cmap="RdBu_r", max_patterns=9,
-                      pdf=None):
+
+def plot_eof_patterns(eof_ds, title, pdf, cmap="RdBu_r", max_patterns=9):
     """Map the leading EOF spatial patterns plus a scree panel of variance explained.
 
     ``eof_ds`` is the Dataset from ``eof.compute_eofs``, whose EOFs are dimensionless
@@ -266,7 +383,8 @@ def plot_eof_patterns(eof_ds, title, out_path=None, cmap="RdBu_r", max_patterns=
     95% threshold — mapping them all is unreadable and the regression uses every
     retained mode regardless). The final panel is a scree: a per-mode bar when the
     modes are few, otherwise a cumulative-variance curve marking the retained count.
-    Written to ``out_path`` or appended as a page of ``pdf`` (see ``_save_figure``).
+    Appended as a page of ``pdf``, followed by a page of the mapped patterns' zonal
+    statistics in the same layout (sharing one y range; no scree panel).
     """
     eofs = eof_ds["eofs"]
     n = eofs.sizes["mode"]
@@ -297,7 +415,16 @@ def plot_eof_patterns(eof_ds, title, out_path=None, cmap="RdBu_r", max_patterns=
                  f"mapped leading {n_plot}", fontsize=9)
     fig.suptitle(title, fontsize=12)
     fig.tight_layout(rect=(0, 0, 1, 0.97))
-    _save_figure(fig, out_path=out_path, pdf=pdf)
+    _save_figure(fig, pdf=pdf)
+
+    patterns = [eofs.isel(mode=i) for i in range(n_plot)]
+    ylim = zonal_range(patterns)
+    plot_zonal_grid(
+        {divmod(i, ncols): ZonalPanel(f"EOF {i + 1}  ({var[i] * 100:.1f}% var)", pattern,
+                                      ZONAL_NEUTRAL_COLOR, ylim, "dimensionless (RMS = 1)")
+         for i, pattern in enumerate(patterns)},
+        (-(-n_plot // ncols), ncols), f"{title}\nzonal statistics over longitude", pdf,
+    )
 
 
 def plot_pc_regression(pc_fit, predictors, pcs, title, out_path=None,
@@ -761,9 +888,10 @@ def plot_case_grid_page(field, title, cmap, vmin, vmax, pdf, rasterized):
     _save_figure(fig, pdf=pdf, dpi=CASE_GRID_RASTER_DPI)
 
 
-def plot_map_grid(panels, shape, title, units, cmap, bound, out_path=None, pdf=None):
-    """One page of maps on a ``shape`` (rows, cols) grid sharing one color scale,
-    written to ``out_path`` or appended to ``pdf`` (see ``_save_figure``).
+def plot_map_grid(panels, shape, title, units, cmap, bound, zonal_ylim, pdf):
+    """One page of ``pdf``: maps on a ``shape`` (rows, cols) grid sharing one color
+    scale, followed by a page of their zonal statistics in the same layout on the
+    y range ``zonal_ylim``.
 
     ``panels`` maps ``(row, col)`` to ``(panel title, (lat, lon) DataArray)``;
     grid cells not in ``panels`` are left blank. The symmetric scale is
@@ -787,11 +915,57 @@ def plot_map_grid(panels, shape, title, units, cmap, bound, out_path=None, pdf=N
                         pad=0.02, aspect=40)
     cbar.set_label(units)
     fig.suptitle(title, fontsize=12)
-    _save_figure(fig, out_path=out_path, pdf=pdf, dpi=CASE_GRID_RASTER_DPI)
+    _save_figure(fig, pdf=pdf, dpi=CASE_GRID_RASTER_DPI)
+
+    plot_zonal_grid(
+        {cell: ZonalPanel(panel_title, field, ZONAL_NEUTRAL_COLOR, zonal_ylim, units)
+         for cell, (panel_title, field) in panels.items()},
+        shape, f"{title}\nzonal statistics over longitude", pdf,
+    )
+
+
+def plot_case_grid_zonal_page(field, title, pdf):
+    """One page of ``pdf``: the zonal statistics of ``field`` (``(co2, hosing, lat,
+    lon)``) as a 3 x 3 grid laid out like ``data_loader.CASE_GRID``, plus a tall
+    right-hand panel overlaying all nine zonal means.
+
+    Grid panels take their case's ``HOSING_COLOR`` and share one y range; the
+    overlay styles each case with ``case_line_style`` and has its own y range,
+    fitted to the means alone.
+    """
+    fig = plt.figure(figsize=(19, 9.5), layout="constrained")
+    gridspec = fig.add_gridspec(len(dl.CO2_LEVELS), len(dl.HOSING_LEVELS) + 1,
+                                width_ratios=[1] * len(dl.HOSING_LEVELS) + [1.3])
+    ylim = zonal_range([field])
+    for i, co2 in enumerate(dl.CO2_LEVELS):
+        for j, hosing in enumerate(dl.HOSING_LEVELS):
+            ax = fig.add_subplot(gridspec[i, j])
+            draw_zonal_statistics(ax, field.sel(co2=co2, hosing=hosing), HOSING_COLOR[hosing])
+            ax.set_ylim(ylim)
+            ax.set_title(dl.CASE_GRID[i][j], fontsize=10)
+    means = field.mean("lon")
+    overlay = fig.add_subplot(gridspec[:, -1])
+    for i, co2 in enumerate(dl.CO2_LEVELS):
+        for j, hosing in enumerate(dl.HOSING_LEVELS):
+            case = dl.CASE_GRID[i][j]
+            overlay.plot(means["lat"].values, means.sel(co2=co2, hosing=hosing).values,
+                         lw=1.5, label=case, **case_line_style(case))
+    overlay.axhline(0, color="0.5", lw=0.5)
+    set_sine_latitude_axis(overlay)
+    overlay.set_ylim(zonal_range([means]))
+    overlay.tick_params(axis="y", labelsize=7)
+    overlay.grid(alpha=0.3)
+    overlay.set_title("zonal means, all cases (own y range)", fontsize=10)
+    overlay.legend(fontsize=8, handlelength=3)
+    fig.supylabel(label_with_units(field.name, field.attrs["units"]))
+    fig.legend(handles=ZONAL_LEGEND_HANDLES, loc="outside lower center", ncol=4, fontsize=8)
+    fig.suptitle(f"{title}\nzonal statistics over longitude", fontsize=12)
+    _save_figure(fig, pdf=pdf)
 
 
 def plot_case_grid_book(grid, pdf, rasterized):
-    """Append the four ``CASE_GRID_PAGES`` for one variable to ``pdf``.
+    """Append the four ``CASE_GRID_PAGES`` for one variable to ``pdf``, each map
+    page followed by its zonal-statistics page (``plot_case_grid_zonal_page``).
 
     ``grid`` is a ``data_loader.case_grid_time_mean`` result. The raw page uses
     ``viridis`` scaled to the 1st-99th percentile over all nine panels; the
@@ -806,8 +980,10 @@ def plot_case_grid_book(grid, pdf, rasterized):
     low, high = np.nanpercentile(grid.values, [1, 99])
     plot_case_grid_page(grid, f"{header}\n{raw_label}", "viridis", low, high,
                         pdf, rasterized)
+    plot_case_grid_zonal_page(grid, f"{header}\n{raw_label}", pdf)
     for label, transform in difference_pages:
         field = transform(grid).assign_attrs(grid.attrs).rename(grid.name)
         bound = symmetric_bound(field.values)
         plot_case_grid_page(field, f"{header}\n{label}", diverging, -bound, bound,
                             pdf, rasterized)
+        plot_case_grid_zonal_page(field, f"{header}\n{label}", pdf)

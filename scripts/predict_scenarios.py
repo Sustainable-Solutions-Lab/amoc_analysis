@@ -35,8 +35,10 @@ the intercept cancels. Set 5 uses raw predictors; set 10 uses the centered colum
 (q_Tglob, q_AMOC, q_Tglob.AMOC), evaluated with the pooled centering means read
 from the coef file's ``centering_mean_*`` attributes, with the interaction term
 formed per state. All panels for a predictand, in both sets, share one symmetric
-color scale, so set 5 and set 10 compare directly. One single-page PDF per
-predictand, one page per set: ``data/output/scenarios/<predictand>_scenarios.pdf``.
+color scale, so set 5 and set 10 compare directly. Each map page is followed by a
+page of the same panels' zonal statistics over longitude (mean, median, 5-95% band,
+min/max against sine of latitude), again on one y range shared by both sets. One
+PDF per predictand, two pages per set: ``data/output/scenarios/<predictand>_scenarios.pdf``.
 
     python scripts/predict_scenarios.py [--variables minimal | tas pr ...]
 """
@@ -53,7 +55,7 @@ from matplotlib.backends.backend_pdf import PdfPages
 
 import data_loader as dl
 import regression as reg
-from output import label_with_units, plot_map_grid, symmetric_bound, value_with_units
+from output import label_with_units, plot_map_grid, symmetric_bound, value_with_units, zonal_range
 
 REG_DIR = os.path.join(dl._REPO_ROOT, "data", "output", "regression")
 OUT_DIR = os.path.join(dl._REPO_ROOT, "data", "output", "scenarios")
@@ -145,8 +147,9 @@ def run_for_predictand(name, state):
     print(f"[{name}] set-10 centering: Tglob={mT:.3f} K, AMOC={mA:.3f} Sv")
 
     panels = {s: grid_panels(dsets[s]["coef"], s, state, mT, mA) for s in SET_NUMBERS}
-    bound = symmetric_bound(np.concatenate(
-        [field.values.ravel() for grid in panels.values() for _, field in grid.values()]))
+    fields = [field for grid in panels.values() for _, field in grid.values()]
+    bound = symmetric_bound(np.concatenate([field.values.ravel() for field in fields]))
+    zonal_ylim = zonal_range(fields)
     out_path = os.path.join(OUT_DIR, f"{name}_scenarios.pdf")
     with PdfPages(out_path) as pdf:
         for set_num, grid in panels.items():
@@ -158,7 +161,8 @@ def run_for_predictand(name, state):
                 title=(f"Predicted decadal-mean Δ{name}, set {set_num} "
                        f"({'Tglob + AMOC' if set_num == 5 else 'Tglob + AMOC + Tglob·AMOC'}); "
                        f"rows: warming, columns: AMOC decline"),
-                units=label_with_units(f"Δ{name}", units), cmap=cmap, bound=bound, pdf=pdf,
+                units=label_with_units(f"Δ{name}", units), cmap=cmap, bound=bound,
+                zonal_ylim=zonal_ylim, pdf=pdf,
             )
     print(f"wrote {out_path}")
 

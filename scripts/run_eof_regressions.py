@@ -8,8 +8,9 @@ By default only sets 5 & 10 are run (pass ``--all-sets`` for all ten).
 
 Outputs, flat in ``data/output/eof/``:
 
-- ``<var>_pc.pdf`` -- EOF patterns + scree, then one PC-regression page per
-  predictor set, then one fitted-vs-actual PC page per richer set (6, 9, 10) fit.
+- ``<var>_pc.pdf`` -- EOF patterns + scree, their zonal statistics, then one
+  PC-regression page per predictor set, then one fitted-vs-actual PC page per
+  richer set (6, 9, 10) fit.
 - ``<var>_pc.nc`` -- the PC-space regression of every set fit, one NetCDF group
   per set (``set5``, ``set10``, ...; ``regression.set_group``): ``coef``, ``se``,
   ``tstat``, ``pvalue`` on ``(param, mode)`` and ``r2`` on ``mode``.
@@ -56,7 +57,9 @@ CAVEATS = """EOF / principal-component analysis of decadal-mean fields.
   time and shown in the scree panel.
 - Files (flat in this directory, one pair per variable):
     * <var>_pc.pdf -- page 1: the leading EOF patterns (at most 9 mapped) and a
-      scree of variance explained. Then one page per predictor set: the
+      scree of variance explained. Page 2: the mapped patterns' zonal statistics
+      over longitude (mean, median, 5-95% band, min/max vs sine of latitude).
+      Then one page per predictor set: the
       PC-on-scalar regression, one panel per retained mode, a bar per predictor
       showing the STANDARDIZED coefficient beta*sigma(x)/sigma(PC) with +/-SE;
       faded bars are not significant (p > 0.05); panel titles give R^2 and % var.

@@ -110,6 +110,20 @@ _CAM_FIELDS = [
     ("SNOWHICE", 1.0, "m", "Water equivalent snow depth over sea ice"),
     ("SNOWHLND", 1.0, "m", "Water equivalent snow depth over land"),
 ]
+def _toa_net_down(ds):
+    """Net downward radiation at top of model (W/m2): FSNT - FLNT."""
+    return ds["FSNT"] - ds["FLNT"]
+
+
+def _sfc_net_energy_down(ds):
+    """Net downward surface energy flux (W/m2): radiation, turbulent fluxes, and
+    the latent heat of fusion to melt falling snow (absent from LHFLX)."""
+    return (ds["FSNS"] - ds["FLNS"] - ds["LHFLX"] - ds["SHFLX"]
+            - SNOW_MELT_ENERGY_PER_M * (ds["PRECSC"] + ds["PRECSL"]))
+
+
+_SFC_NET_ENERGY_DOWN_DEFINITION = "FSNS - FLNS - LHFLX - SHFLX - 3.337e8 * (PRECSC + PRECSL)"
+
 _DERIVED_FIELDS = [
     # (analysis name, definition, compute, units, long_name)
     ("pr_minus_evap", "PRECT * 8.64e7 - QFLX * 86400",
@@ -118,13 +132,16 @@ _DERIVED_FIELDS = [
     ("prsn", "(PRECSC + PRECSL) * 8.64e7",
      lambda ds: (ds["PRECSC"] + ds["PRECSL"]) * M_PER_S_TO_MM_PER_DAY,
      WATER_FLUX_UNITS, "Snowfall (water equivalent)"),
-    ("toa_net_down", "FSNT - FLNT",
-     lambda ds: ds["FSNT"] - ds["FLNT"],
+    ("toa_net_down", "FSNT - FLNT", _toa_net_down,
      "W/m2", "Net downward radiation at top of model"),
-    ("sfc_net_energy_down", "FSNS - FLNS - LHFLX - SHFLX - 3.337e8 * (PRECSC + PRECSL)",
-     lambda ds: (ds["FSNS"] - ds["FLNS"] - ds["LHFLX"] - ds["SHFLX"]
-                 - SNOW_MELT_ENERGY_PER_M * (ds["PRECSC"] + ds["PRECSL"])),
+    ("sfc_net_energy_down", _SFC_NET_ENERGY_DOWN_DEFINITION, _sfc_net_energy_down,
      "W/m2", "Net downward surface energy flux (radiation + turbulent + snow melt)"),
+    # Net energy into the atmospheric column. The atmosphere stores almost no
+    # energy over long means, so this is the divergence of atmospheric energy
+    # transport: positive where the atmosphere exports energy (tropics).
+    ("atm_energy_divergence", f"(FSNT - FLNT) - ({_SFC_NET_ENERGY_DOWN_DEFINITION})",
+     lambda ds: _toa_net_down(ds) - _sfc_net_energy_down(ds),
+     "W/m2", "Atmospheric energy transport divergence (toa_net_down - sfc_net_energy_down)"),
     ("cloud_radiative_effect", "SWCF + LWCF",
      lambda ds: ds["SWCF"] + ds["LWCF"],
      "W/m2", "Net cloud radiative effect at top of model"),
@@ -159,7 +176,7 @@ VARIABLES = {
 }
 
 # Named variable sets for scripts that loop over variables, so a quick test can
-# run a few fields instead of all 46 (``--variables minimal``). ``minimal`` is
+# run a few fields instead of all 47 (``--variables minimal``). ``minimal`` is
 # surface temperature and total precipitation; ``key`` adds convective precipitation
 # and the main water-cycle, humidity, cloud and energy-budget fields. Every variable is also its own set, so
 # a CLI can mix set names and variable names (see ``resolve_variables``).
@@ -368,6 +385,31 @@ def latitude_band_weights(lat):
 def global_mean(da):
     """Area-weighted global mean over (``lat``, ``lon``)."""
     return da.weighted(latitude_band_weights(da["lat"])).mean(("lat", "lon"))
+
+
+# Quantiles over longitude bounding the shaded band of a zonal-statistics plot:
+# the middle 90% of the cells at each latitude.
+ZONAL_BAND_QUANTILES = (0.05, 0.95)
+
+
+def zonal_statistics(da):
+    """Statistics over longitude at each latitude of a ``(lat, lon)`` field.
+
+    Returns a Dataset on ``lat`` with ``mean``, ``median``, ``low`` / ``high``
+    (the ``ZONAL_BAND_QUANTILES``), ``min`` and ``max``. All cells at one latitude
+    have equal area, so no weighting is needed. NaN cells (e.g. masked land) are
+    skipped; a latitude with no valid cell gives NaN, a gap in the plotted lines.
+    """
+    low, high = ZONAL_BAND_QUANTILES
+    quantiles = da.quantile([low, 0.5, high], dim="lon")
+    return xr.Dataset({
+        "mean": da.mean("lon"),
+        "median": quantiles.sel(quantile=0.5, drop=True),
+        "low": quantiles.sel(quantile=low, drop=True),
+        "high": quantiles.sel(quantile=high, drop=True),
+        "min": da.min("lon"),
+        "max": da.max("lon"),
+    })
 
 
 def interhemispheric_difference(da):

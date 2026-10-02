@@ -1,9 +1,13 @@
 """PDF books of 3 x 3 CO2 x hosing map grids, one book per analysis variable.
 
 Each variable gets its own book, ``data/output/case_grid/<var>_2101-2150.pdf``,
-with four pages (see
+with four map pages (see
 ``output.CASE_GRID_PAGES``), each a 3 x 3 grid of time-mean maps: rows 1x, 2x,
-4xCO2 (top to bottom), columns -0.3, 0, +0.3 Sv hosing (left to right).
+4xCO2 (top to bottom), columns -0.3, 0, +0.3 Sv hosing (left to right). Each map
+page is followed by its zonal-statistics page (8 pages in all): the same 3 x 3
+grid of statistics over longitude (mean, median, 5-95% band, min/max against sine
+of latitude, in each case's hosing color) plus a panel overlaying all nine zonal
+means in the case line styles.
 
   1. raw field
   2. minus piControl (1xCO2, 0 Sv)
@@ -49,7 +53,7 @@ def main():
         with PdfPages(out_path) as pdf:
             plot_case_grid_book(dl.case_grid_time_mean(var, FIRST_YEAR, LAST_YEAR),
                                 pdf, rasterized=not args.vector)
-        print(f"wrote {out_path}  (4 pages)")
+        print(f"wrote {out_path}  (8 pages)")
 
 
 if __name__ == "__main__":

@@ -159,7 +159,7 @@ hosing = `m03Sv`, 0 Sv, `p03Sv` (left to right).
 
 ### Analysis variables and units (`src/data_loader.py`)
 
-`data_loader.VARIABLES` defines **46 analysis variables**. Each is available for
+`data_loader.VARIABLES` defines **47 analysis variables**. Each is available for
 all nine runs, and each is a regression predictand. Every variable has a
 `definition` (a formula in CAM field names), `units` and a `long_name`, and each
 loaded field records these, plus its source file, as attributes.
@@ -170,7 +170,7 @@ loaded field records these, plus its source file, as attributes.
 - **CAM names (36):** every other field in the files keeps its CAM name (table
   above). Water fluxes (`PRECL`, `PRECSH`, `PRECSC`, `PRECSL`, `QFLX`) are converted
   to mm day⁻¹, like `pr` and `prc`. All other fields keep their native units.
-- **Derived (7):**
+- **Derived (8):**
 
 | Variable | Definition | Units | Meaning |
 | --- | --- | --- | --- |
@@ -178,6 +178,7 @@ loaded field records these, plus its source file, as attributes.
 | `prsn` | (`PRECSC` + `PRECSL`) × 8.64e7 | mm day⁻¹ | snowfall (water equivalent) |
 | `toa_net_down` | `FSNT` − `FLNT` | W m⁻² | net downward radiation at top of model |
 | `sfc_net_energy_down` | `FSNS` − `FLNS` − `LHFLX` − `SHFLX` − 3.337e8 × (`PRECSC` + `PRECSL`) | W m⁻² | net downward surface energy flux (radiative + turbulent + melting of snowfall; see below) |
+| `atm_energy_divergence` | `toa_net_down` − `sfc_net_energy_down` | W m⁻² | net energy into the atmospheric column ≈ divergence of atmospheric energy transport (see below) |
 | `cloud_radiative_effect` | `SWCF` + `LWCF` | W m⁻² | net cloud radiative effect at top of model |
 | `diurnal_temperature_range` | `TREFMXAV` − `TREFMNAV` | K | mean diurnal temperature range |
 | `planetary_albedo` | 1 − `FSNT` / `SOLIN` | 1 | planetary albedo (from annual-mean fluxes) |
@@ -194,6 +195,14 @@ constants L_f = 3.337×10⁵ J kg⁻¹ and ρ_w = 1000 kg m⁻³
 global mean and concentrated where snow falls. Without it the surface flux runs
 0.5–0.7 W m⁻² above the top-of-model flux; with it the two agree to within
 0.03 W m⁻² in the 2101–2150 means of the 1×, 2× and 4×CO₂ runs.
+
+**Atmospheric energy transport.** `atm_energy_divergence` is the net energy entering
+the atmospheric column, top-of-model minus surface net downward flux. The atmosphere
+stores almost no energy, so in a long-term mean (e.g. the 50-year case-grid maps) it
+equals the divergence of the atmosphere's horizontal energy transport: positive where
+the atmosphere exports energy (the tropics), negative where it imports it (high
+latitudes), with a global mean near zero. Differences between runs show changes in
+that transport.
 
 **Water-flux units.** All water fluxes (precipitation, snowfall, evaporation,
 P − E) are in **mm day⁻¹** of liquid water (`data_loader.WATER_FLUX_UNITS`). CAM
@@ -315,7 +324,7 @@ handle the FV grid's half-width polar cells at ±90°.
 `scripts/run_regressions.py` regresses a gridded annual-mean **predictand** (one
 time series per grid cell) on the scalar indices `tas_global_mean` (Tglob, K),
 `tas_interhemispheric_diff` (dT_NS, K) and `amoc_strength` (AMOC at 26.5°N, Sv).
-It runs for **every analysis variable** (46 predictands, see
+It runs for **every analysis variable** (47 predictands, see
 [Analysis variables](#analysis-variables-and-units-srcdata_loaderpy)). Each
 predictand's field is read directly from the input files.
 
@@ -397,7 +406,9 @@ in memory until the book is closed.
 
 Flat in `data/output/regression/`, with a shared caveats `README.txt`:
 
-- `<var>_coef.pdf` — one PDF book per predictand, one page per predictor set.
+- `<var>_coef.pdf` — one PDF book per predictand: per predictor set, a page of
+  coefficient maps followed by its zonal-statistics page (see
+  [Zonal-statistics pages](#zonal-statistics-pages)).
 - `<var>_coef.nc` — the coefficient/SE/t/p/R² fields, one NetCDF group per
   predictor set (`set5`, `set10`, …; `regression.set_group`). Read a set with
   `xr.open_dataset(path, group="set10")`; set 10's group attributes carry the
@@ -535,7 +546,8 @@ caveats `README.txt`:
   NetCDF group per set (`set5`, `set10`, …): `coef`, `se`, `tstat`, `pvalue` on
   `(param, mode)` and `r2` on `mode`.
 - `<var>_pc.pdf`, in page order:
-  1. the leading EOF spatial patterns + a variance scree;
+  1. the leading EOF spatial patterns + a variance scree, followed by the patterns'
+     zonal-statistics page (see [Zonal-statistics pages](#zonal-statistics-pages));
   2. the PC-on-scalar regression — the EOF analog of the 2D coefficient maps, with
      the discrete EOF-mode index replacing the (lat, lon) grid. One **page per
      predictor set**; each page has one panel per retained EOF mode, with a bar per
@@ -612,8 +624,9 @@ between two states is `coef · (predictor(X) − predictor(R))`; the intercept c
 and set 10 evaluates its centered columns and interaction with the fit's centering
 means.
 
-Outputs: `data/output/scenarios/<predictand>_scenarios.pdf`, one page per set
-(5, then 10). All panels for a predictand, **in both sets**, share one symmetric color scale
+Outputs: `data/output/scenarios/<predictand>_scenarios.pdf`, two pages per set
+(5, then 10): the map grid, then its zonal-statistics page (see
+[Zonal-statistics pages](#zonal-statistics-pages)), on one y range shared by both sets. All panels for a predictand, **in both sets**, share one symmetric color scale
 (99th percentile of |change|), so set 5 and set 10 compare directly. Each panel title
 gives its area-weighted global mean.
 
@@ -696,6 +709,27 @@ band30:
   0.83 / 0.87 with `prc`), and the AMOC slope in the wider band is smaller (0.052,
   against 0.059 ° Sv⁻¹).
 
+### Zonal-statistics pages
+
+Every map page in the case-grid, regression, EOF, and scenario books is followed
+by a **zonal-statistics page** with the same panel layout. For each panel's
+(lat, lon) field, it plots statistics over longitude at each latitude
+(`data_loader.zonal_statistics`; no weighting is needed, since all cells at one
+latitude have equal area; NaN cells are skipped):
+
+- the **mean** (thick line) and **median** (thin line);
+- a shaded band holding the middle **90% of cells** (5th–95th percentile);
+- hairlines at the **min** and **max**.
+
+The x axis is scaled by **sin(latitude)**, so equal widths are equal areas, and is
+labeled in degrees. Statistics are distinguished by line weight, never by dashes,
+which mean 2× and 4×CO₂ in the case convention. Case panels take their case's
+hosing color (−0.3, 0, +0.3 Sv = red, black, blue); other panels are black. Panels
+in the same units share one y range spanning their min and max. Each case-grid
+zonal page adds a tall panel overlaying all nine zonal means in the case line
+styles, on its own y range. Regression zonal pages include every cell, significant
+or not.
+
 ## Reproducing the results
 
 After placing the input files in `data/input/` (see [Data](#data)) and installing
@@ -707,7 +741,7 @@ python scripts/run_regressions.py          # data/output/regression/<var>_coef.{
 python scripts/plot_predictor_scatter.py   # data/output/regression/predictor_scatter.pdf
 python scripts/plot_scalar_timeseries.py   # data/output/regression/predictor_timeseries.pdf
 python scripts/plot_tglob_vs_amoc.py       # data/output/regression/tglob_vs_amoc.pdf (AMOC vs Tglob, 9 cases)
-python scripts/plot_case_grid_book.py      # data/output/case_grid/<var>_2101-2150.pdf (3x3 case maps, one book per variable)
+python scripts/plot_case_grid_book.py      # data/output/case_grid/<var>_2101-2150.pdf (3x3 case maps + zonal pages, one book per variable)
 python scripts/run_eof_regressions.py      # data/output/eof/<var>_pc.{pdf,nc}
 python scripts/predict_scenarios.py        # data/output/scenarios/<var>_scenarios.pdf
 python scripts/run_itcz_regressions.py     # data/output/itcz/<band>_coef_table.csv
@@ -731,7 +765,7 @@ fields, so they have no `--variables`.
 | --- | --- | --- |
 | `minimal` | `tas`, `pr` | ~20 s / ~10 s |
 | `key` | 13: `tas`, `diurnal_temperature_range`, `pr`, `prc`, `pr_minus_evap`, `prsn`, `RHREFHT`, `TMQ`, `CLDTOT`, `cloud_radiative_effect`, `toa_net_down`, `sfc_net_energy_down`, `planetary_albedo` | ~2 min / ~40 s |
-| `all` (default) | all 46 | ~6 min / ~2 min |
+| `all` (default) | all 47 | ~6 min / ~2 min |
 
 ```bash
 python scripts/run_regressions.py --variables minimal
@@ -739,7 +773,7 @@ python scripts/plot_case_grid_book.py --variables key SHFLX   # sets and names m
 ```
 
 Every output is per variable, so a subset run simply rewrites that subset's files
-and leaves the others alone. A full run of everything on all 46
+and leaves the others alone. A full run of everything on all 47
 variables takes roughly 20 minutes, mostly figure rendering (the fits take ~1 s
 per variable), with peak memory under 2 GB.
 
@@ -755,7 +789,7 @@ much lighter for a LaTeX engine to load than the vector PDFs.
 ## Status
 
 Preprocessing (`scripts/make_scalar_timeseries.py`), pooled per-grid-point
-regression analysis (`scripts/run_regressions.py`, sets 1–10 for all 46 analysis
+regression analysis (`scripts/run_regressions.py`, sets 1–10 for all 47 analysis
 variables), predictor scatter
 and time series (`scripts/plot_predictor_scatter.py`,
 `scripts/plot_scalar_timeseries.py`), the additive EOF / principal-component path

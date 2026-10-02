@@ -147,6 +147,16 @@ rather than hiding them.
   `output.case_marker_style(case, points_per_case)`, which applies the rule
   (constants `output.CO2_MARKER`, `output.FILLED_MARKER_MAX_POINTS`). Every figure that distinguishes cases uses these
   two conventions — never a generic color cycle.
+- **Zonal-statistics plots**: every map page is followed by a page with the same
+  panel layout showing, per latitude, statistics over longitude of each panel's
+  field (`data_loader.zonal_statistics`): mean (thick line, lw 1.8), median (thin
+  line, lw 0.8), a 5–95% band (alpha 0.2), and min/max hairlines (lw 0.4). The x axis
+  is scaled by sine of latitude and labeled in degrees (`output.set_sine_latitude_axis`).
+  Statistics are told apart by line weight, never dashes (dashes mean CO₂ level).
+  Case panels use their hosing color (`output.HOSING_COLOR`); non-case panels are
+  black. Draw a panel with `output.draw_zonal_statistics(ax, field, color)` and a
+  page with `output.plot_zonal_grid`. Case-grid zonal pages add a panel overlaying
+  all nine zonal means in `case_line_style`, on its own y range.
 - **Shared axis ranges**: Unless a plot specifies otherwise, panels of a
   multi-panel figure whose axes carry the same units use the same axis range on
   those axes (`plt.subplots(..., sharex=True, sharey=True)`, or one explicit range
