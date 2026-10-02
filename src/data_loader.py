@@ -177,16 +177,16 @@ VARIABLES = {
 
 # Named variable sets for scripts that loop over variables, so a quick test can
 # run a few fields instead of all 47 (``--variables minimal``). ``minimal`` is
-# surface temperature and total precipitation; ``key`` adds convective precipitation
-# and the main water-cycle, humidity, cloud and energy-budget fields. Every variable is also its own set, so
+# surface temperature and total precipitation; ``key`` adds the main water-cycle,
+# humidity, cloud and energy-budget fields. Every variable is also its own set, so
 # a CLI can mix set names and variable names (see ``resolve_variables``).
 VARIABLE_SETS = {
     **{var: [var] for var in VARIABLES},
     "minimal": ["tas", "pr"],
     "key": [
-        "tas", "diurnal_temperature_range", "pr", "prc", "pr_minus_evap", "prsn",
-        "RHREFHT", "TMQ", "CLDTOT", "cloud_radiative_effect", "toa_net_down",
-        "sfc_net_energy_down", "planetary_albedo",
+        "tas", "diurnal_temperature_range", "pr", "pr_minus_evap", "RHREFHT", "TMQ",
+        "CLDTOT", "cloud_radiative_effect", "toa_net_down", "sfc_net_energy_down",
+        "atm_energy_divergence", "planetary_albedo",
     ],
     "all": list(VARIABLES),
 }

@@ -41,6 +41,7 @@ Key dependencies:
 amoc_analysis/
 ├── data/
 │   ├── input/      # CESM model output (read-only — do not modify)
+│   ├── processed/  # per-run scalar time series (git-ignored, regenerable)
 │   └── output/     # generated results, tables, figures (git-ignored)
 ├── src/            # analysis modules (data loading, regression, plotting)
 ├── scripts/        # thin command-line wrappers around src modules
@@ -62,9 +63,8 @@ tracked, so **a colleague has to obtain them separately** and put them in
 > (`cami_0000-01-01_1.9x2.5_L26`), and the upstream path `…/CESM1_AMOC_Data/…` in
 > each file's `history`. They do not record the minor version (the `Version`
 > attribute is an unfilled `$Name$`); 1.2 is per the data provider. Processed
-> files are tagged `CESM1` (`data_loader.SOURCE_ID`). The earlier CESM2 inputs (monthly CMORized and CAM
-> files) are kept for reference in `data/input/old_data/`, and the code no longer
-> reads them.
+> files are tagged `CESM1` (`data_loader.SOURCE_ID`). The earlier CESM2 inputs are
+> no longer used or kept.
 
 > **TODO (data source):** record where these files come from (archive/DOI/URL or
 > internal path) so that the inputs can be reproduced. Per their `history`
@@ -313,11 +313,31 @@ handle the FV grid's half-width polar cells at ±90°.
 
 ## Analysis
 
-> **Status of this section (CESM1.2 data).** Every analysis below (gridded
-> regressions, EOFs, scenario prediction, ITCZ regressions) has been run on the nine
-> CESM1.2 runs, and all numbers quoted are CESM1.2 results, with water fluxes in
-> mm day⁻¹. The earlier CESM2 regression outputs are kept for reference in
-> `data/output/old_cesm2/regression/`.
+> **Status of this section (CESM1.2 data).** Every analysis below (case-grid maps,
+> gridded regressions, EOFs, scenario prediction, ITCZ regressions) has been run on
+> the nine CESM1.2 runs, and all numbers quoted are CESM1.2 results, with water
+> fluxes in mm day⁻¹.
+
+### Case-grid map books
+
+`scripts/plot_case_grid_book.py` maps each analysis variable's 2101–2150 mean (the
+last 50 years common to all nine runs) for every case. It writes one book per
+variable, `data/output/case_grid/<var>_2101-2150.pdf`, with four map pages
+(`output.CASE_GRID_PAGES`). Each page is a 3 × 3 grid laid out like
+`data_loader.CASE_GRID`: rows are 1×, 2×, 4×CO₂ (top to bottom), and columns are
+−0.3, 0, +0.3 Sv hosing (left to right).
+
+1. the raw field (`viridis`, 1st–99th percentile over all nine panels);
+2. minus the piControl (1×CO₂, 0 Sv);
+3. minus the 1×CO₂ run at the same hosing (the CO₂ effect);
+4. minus the no-hosing run at the same CO₂ (the hosing effect).
+
+Difference pages use a diverging colormap with symmetric bounds (white = 0; `RdBu`
+for water fluxes, so wetter is blue). Each panel title gives the area-weighted global
+mean. Each map page is followed by its zonal-statistics page (see
+[Zonal-statistics pages](#zonal-statistics-pages)), so a book has 8 pages. Map
+fields are rasterized at 150 dpi to keep the PDFs small; `--vector` draws them as
+vector graphics instead.
 
 ### Pooled per-grid-point regressions
 
@@ -600,7 +620,7 @@ and where does it ameliorate it?* Four states form a 2 × 2 factorial:
 | warm | T0 + 3 | 20 |
 | warm-weak | T0 + 3 | 6 |
 
-Each output is one page with a **3 × 3 grid** of maps. The corners are the four
+Each set's map page is a **3 × 3 grid** of maps. The corners are the four
 states' changes from the reference; each edge is the difference of its two
 neighbouring corners:
 
@@ -626,9 +646,10 @@ means.
 
 Outputs: `data/output/scenarios/<predictand>_scenarios.pdf`, two pages per set
 (5, then 10): the map grid, then its zonal-statistics page (see
-[Zonal-statistics pages](#zonal-statistics-pages)), on one y range shared by both sets. All panels for a predictand, **in both sets**, share one symmetric color scale
-(99th percentile of |change|), so set 5 and set 10 compare directly. Each panel title
-gives its area-weighted global mean.
+[Zonal-statistics pages](#zonal-statistics-pages)). All panels for a predictand,
+**in both sets**, share one symmetric color scale (99th percentile of |change|) and,
+on the zonal pages, one y range, so set 5 and set 10 compare directly. Each panel
+title gives its area-weighted global mean.
 
 **Results (set 5; set 10 differs by < 0.003 mm day⁻¹ in the global means).**
 Regional means use the boxes of the regression results above:
@@ -763,9 +784,9 @@ fields, so they have no `--variables`.
 
 | Set | Variables | `run_regressions.py` / `plot_case_grid_book.py` time |
 | --- | --- | --- |
-| `minimal` | `tas`, `pr` | ~20 s / ~10 s |
-| `key` | 13: `tas`, `diurnal_temperature_range`, `pr`, `prc`, `pr_minus_evap`, `prsn`, `RHREFHT`, `TMQ`, `CLDTOT`, `cloud_radiative_effect`, `toa_net_down`, `sfc_net_energy_down`, `planetary_albedo` | ~2 min / ~40 s |
-| `all` (default) | all 47 | ~6 min / ~2 min |
+| `minimal` | `tas`, `pr` | ~20 s / ~15 s |
+| `key` | 12: `tas`, `diurnal_temperature_range`, `pr`, `pr_minus_evap`, `RHREFHT`, `TMQ`, `CLDTOT`, `cloud_radiative_effect`, `toa_net_down`, `sfc_net_energy_down`, `atm_energy_divergence`, `planetary_albedo` | ~2 min / ~1 min |
+| `all` (default) | all 47 | ~7 min / ~5 min |
 
 ```bash
 python scripts/run_regressions.py --variables minimal
@@ -796,7 +817,9 @@ and time series (`scripts/plot_predictor_scatter.py`,
 (`scripts/run_eof_regressions.py`, built on `src/eof.py`), the decadal
 scenario-prediction maps (`scripts/predict_scenarios.py`), and the ITCZ-centroid
 scalar regressions (`scripts/run_itcz_regressions.py`,
-`scripts/plot_itcz_regressions.py`), all built on `src/data_loader.py`,
-`src/regression.py`, and `src/output.py`. The regression, EOF, and ITCZ analyses all
+`scripts/plot_itcz_regressions.py`), and the case-grid map books
+(`scripts/plot_case_grid_book.py`), all built on `src/data_loader.py`,
+`src/regression.py`, and `src/output.py`. Every map page in the case-grid,
+regression, EOF, and scenario books is followed by a zonal-statistics page. The regression, EOF, and ITCZ analyses all
 use **decadal means** (10-year block means), and only sets 5 & 10 are fit unless
 `--all-sets` is given.
