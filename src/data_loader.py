@@ -30,8 +30,10 @@ AMOC strength is not in the gridded files; it is read from the separate CSV
 
 import os
 
+import cartopy.io.shapereader as shapereader
 import numpy as np
 import pandas as pd
+import shapely
 import xarray as xr
 
 SOURCE_ID = "CESM1"
@@ -272,6 +274,29 @@ def case_grid_time_mean(var, first_year, last_year):
                   "time_mean": f"{first_year}-{last_year}"}
     return grid.rename(var)
 
+
+# Cases separating the 4xCO2 response into parts with and without AMOC weakening:
+# 4xCO2_m03Sv keeps AMOC near the 1xCO2 control's ~20 Sv, while unhosed 4xCO2
+# weakens to ~10 Sv, so 4xCO2 - 4xCO2_m03Sv is the AMOC-weakening effect at 4xCO2
+# and 4xCO2_m03Sv - 1xCO2 the CO2 effect at near-constant AMOC.
+CO2_AMOC_CASES = ["1xCO2", "4xCO2_m03Sv", "4xCO2"]
+
+
+def case_annual_fields(var, cases, first_year, last_year):
+    """Annual means of ``var`` over calendar years ``first_year``..``last_year``
+    (inclusive) for ``cases``, loaded into memory as a ``(case, year, lat, lon)``
+    DataArray. Every case must cover the full year range (``sel`` raises otherwise).
+    """
+    years = np.arange(first_year, last_year + 1)
+    fields = xr.concat([load_annual_field(case, var).sel(year=years) for case in cases],
+                       dim=pd.Index(cases, name="case"))
+    spec = VARIABLES[var]
+    fields.attrs = {"units": spec["units"], "long_name": spec["long_name"],
+                    "definition": spec["definition"],
+                    "time_mean": f"{first_year}-{last_year}"}
+    return fields.rename(var).load()
+
+
 def scalar_file(experiment):
     """Processed per-simulation scalar time-series file name."""
     return f"scalars_annual_{SOURCE_ID}_{experiment}.nc"
@@ -364,6 +389,32 @@ def block_average_on_years(obj, block):
 AMOC_FILE = "amoc_timeseries_26p5N_9experiments_v5_annual.csv"
 
 
+# The input files carry no land fraction (no LANDFRAC), so land is taken from the
+# Natural Earth 110m land polygons (the source of the map coastlines). Each grid
+# cell is sampled on a LAND_MASK_SUBSAMPLES x LAND_MASK_SUBSAMPLES lattice and
+# counts as land when at least half of its samples fall on land. Antarctica is land.
+LAND_MASK_SUBSAMPLES = 5
+
+
+def land_mask(lat, lon):
+    """Boolean ``(lat, lon)`` DataArray, True where at least half of each grid cell
+    (cells bounded midway between the ``lat``/``lon`` centers, clipped at the poles)
+    lies on Natural Earth 110m land."""
+    land = shapely.union_all(list(shapereader.Reader(
+        shapereader.natural_earth(resolution="110m", category="physical", name="land")
+    ).geometries()))
+    offsets = (np.arange(LAND_MASK_SUBSAMPLES) + 0.5) / LAND_MASK_SUBSAMPLES - 0.5
+    lat_step = np.gradient(lat.values)
+    lon_step = np.gradient(lon.values)
+    sample_lat = np.clip(lat.values[:, None] + offsets * lat_step[:, None], -90, 90)
+    sample_lon = (lon.values[:, None] + offsets * lon_step[:, None] + 180) % 360 - 180
+    on_land = shapely.contains_xy(
+        land, sample_lon[None, :, None, :], sample_lat[:, None, :, None],
+    )  # (lat, lon, lat sample, lon sample)
+    return xr.DataArray(on_land.mean(axis=(2, 3)) >= 0.5, coords={"lat": lat, "lon": lon},
+                        dims=("lat", "lon"), name="land_mask")
+
+
 def latitude_band_weights(lat):
     """Exact zonal-band area weights for a regular (ascending) latitude grid.
 
@@ -385,6 +436,11 @@ def latitude_band_weights(lat):
 def global_mean(da):
     """Area-weighted global mean over (``lat``, ``lon``)."""
     return da.weighted(latitude_band_weights(da["lat"])).mean(("lat", "lon"))
+
+
+def area_weighted_median(da):
+    """Area-weighted median over (``lat``, ``lon``)."""
+    return da.weighted(latitude_band_weights(da["lat"])).quantile(0.5, dim=("lat", "lon"))
 
 
 # Quantiles over longitude bounding the shaded band of a zonal-statistics plot:

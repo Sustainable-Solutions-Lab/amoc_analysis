@@ -339,6 +339,50 @@ mean. Each map page is followed by its zonal-statistics page (see
 fields are rasterized at 150 dpi to keep the PDFs small; `--vector` draws them as
 vector graphics instead.
 
+### 4×CO₂ response with and without AMOC weakening
+
+`scripts/plot_co2_amoc_differences.py` maps differences of 2101–2150 means (the last
+50 years common to the runs) among `data_loader.CO2_AMOC_CASES` as a 2 × 2 page per
+variable (`output.plot_co2_amoc_decomposition`). `4xCO2_m03Sv` holds AMOC near the
+control's ~20 Sv, while `4xCO2` weakens to ~10 Sv:
+
+| | |
+| --- | --- |
+| `4xCO2 − 1xCO2`: total 4×CO₂ response | `4xCO2 − 4xCO2_m03Sv`: AMOC-weakening effect |
+| `4xCO2_m03Sv − 1xCO2`: 4×CO₂ effect at ~20 Sv | ratio: AMOC-weakening effect / 4×CO₂ effect |
+
+Beside each map, a strip shows the zonal mean (thick black line), thin land (green)
+and ocean (blue) zonal means, and the 5–95% band over longitude, plotted against the
+map's projected latitude so the two line up; these strips replace a separate
+zonal-statistics page. The input files carry no land fraction, so land is
+`data_loader.land_mask`: cells at least half covered by Natural Earth 110m land
+polygons (sampled 5 × 5 per cell; 28.7% of the area, Antarctica included).
+
+The three differences share one symmetric color scale (±99th percentile) and strip
+range, and each is stippled where it is not significant: a Welch t-test of each
+run's five 10-year means (`regression.difference_pvalue`), p > 0.05. The ratio
+has its own fixed scale, −1 to +1 on `PuOr_r`, with colors outside that colormap
+beyond each end: teal where the ratio is < −1 (AMOC weakening more than cancels the
+4×CO₂ effect, e.g. tas over the subpolar North Atlantic) and crimson where it is > +1
+(AMOC weakening more than doubles it). The ratio strip spans ±2, faintly shaded teal
+and crimson beyond ±1. Rather than stippled, the ratio map is masked light grey where
+its divisor is unreliable: the CO₂ effect is not significant, or it is significant but
+smaller than 10% of its area-weighted median magnitude (a near-zero divisor;
+`output.RATIO_MIN_DIVISOR_FRACTION`). The floor removes nothing for tas (median
+|CO₂ effect| 3.55 K) and about 1% of the area for pr (median 0.36 mm/day). Cells
+where only the AMOC effect is not significant stay shown; their near-zero ratio
+means AMOC weakening has no detectable effect there (see the AMOC-effect map's dots). Its strip lines are ratios of
+zonal means (not zonal means of cell ratios), and its purple band is the 95%
+confidence interval of the all-longitude ratio
+(`regression.difference_ratio_conf_int`): a delta-method interval from the 10-year
+means of each run's zonal mean, counting `4xCO2_m03Sv` in both numerator and
+denominator, with Welch–Satterthwaite degrees of freedom. It widens without bound
+where the zonal-mean CO₂ effect nears zero. Titles give area-weighted
+global means; for tas, +3.91 K total, −0.60 K AMOC effect, +4.51 K CO₂ effect, a
+ratio of global means of −0.13 (reaching about −0.4 over the subpolar North Atlantic).
+Outputs: `data/output/co2_amoc_diff/<var>_2101-2150.pdf`, merged into
+`data/output/co2_amoc_diff/book_2101-2150.pdf`.
+
 ### Pooled per-grid-point regressions
 
 `scripts/run_regressions.py` regresses a gridded annual-mean **predictand** (one
@@ -396,7 +440,7 @@ wetter or moister is blue (`regression.WET_IS_BLUE`). All other fields use
 
 **Case styling.** Every figure that distinguishes cases uses one convention. Hosing
 sets the color: −0.3, 0, +0.3 Sv = red, black, blue. CO₂ sets the line style (1×,
-2×, 4× = solid, dashed, dotted; `output.case_line_style`) or, in scatter plots, the
+2×, 4× = solid, dotted, dashed; `output.case_line_style`) or, in scatter plots, the
 marker (circle, triangle, square; `output.case_marker_style`). Scatter markers are
 filled when each simulation contributes ≤ 10 points (e.g. decadal means) and open
 outlines when it contributes more (e.g. ~100 annual values).
@@ -433,9 +477,9 @@ Flat in `data/output/regression/`, with a shared caveats `README.txt`:
   predictor set (`set5`, `set10`, …; `regression.set_group`). Read a set with
   `xr.open_dataset(path, group="set10")`; set 10's group attributes carry the
   centering means for its centered (`q_`) terms.
-- `scripts/plot_predictor_scatter.py`, `scripts/plot_scalar_timeseries.py` and
-  `scripts/plot_tglob_vs_amoc.py` write the predictor scatter, time-series and
-  AMOC-vs-Tglob plots to `data/output/regression/`.
+- `scripts/plot_predictor_scatter.py`, `scripts/plot_scalar_timeseries.py`,
+  `scripts/plot_tglob_vs_amoc.py` and `scripts/plot_amoc_timeseries.py` write the
+  predictor scatter, time-series, AMOC-vs-Tglob and AMOC-vs-year plots to `data/output/regression/`.
 
 **Collinearity.** The design is well conditioned for the default sets: VIF =
 1.0002 for set 5 (Tglob, AMOC) and ≤ 1.19 for set 10. The three-index union is
@@ -762,6 +806,8 @@ python scripts/run_regressions.py          # data/output/regression/<var>_coef.{
 python scripts/plot_predictor_scatter.py   # data/output/regression/predictor_scatter.pdf
 python scripts/plot_scalar_timeseries.py   # data/output/regression/predictor_timeseries.pdf
 python scripts/plot_tglob_vs_amoc.py       # data/output/regression/tglob_vs_amoc.pdf (AMOC vs Tglob, 9 cases)
+python scripts/plot_amoc_timeseries.py     # data/output/regression/amoc_timeseries.pdf (AMOC vs year, 9 cases)
+python scripts/plot_co2_amoc_differences.py  # data/output/co2_amoc_diff/book_2101-2150.pdf (4xCO2 / AMOC differences, 1 page per variable)
 python scripts/plot_case_grid_book.py      # data/output/case_grid/<var>_2101-2150.pdf (3x3 case maps + zonal pages, one book per variable)
 python scripts/run_eof_regressions.py      # data/output/eof/<var>_pc.{pdf,nc}
 python scripts/predict_scenarios.py        # data/output/scenarios/<var>_scenarios.pdf
