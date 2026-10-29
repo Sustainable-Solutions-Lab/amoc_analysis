@@ -107,6 +107,12 @@ rather than hiding them.
 - **Regression plots**: Show the data (scatter or line), the fitted line, and a
   shaded confidence band; report slope ± standard error and the relevant
   statistic (R², p-value) in the legend or annotation.
+- **Significance on maps**: never stipple or hatch. Contour the field itself at
+  its colorbar ticks, only where p ≤ 0.05, so color plus contours means significant
+  and color alone means not significant. Use `output.colorbar_levels(vmin, vmax)`
+  for the levels, pass the same levels as the colorbar's `ticks`, and draw with
+  `output.contour_significant(ax, field, pvalue, levels)` (thin solid black lines;
+  dashes mean CO₂ level).
 - **Diverging colormaps**: For difference/anomaly maps or any plot using a
   diverging colormap (e.g. `RdBu_r` where white is the midpoint), always use
   symmetric bounds with equal magnitude and opposite sign so white represents
@@ -135,7 +141,7 @@ rather than hiding them.
   `p03Sv` (+0.3 Sv) (left to right). Case names are `[124]xCO2` (no hosing) and
   `[124]xCO2_[pm]03Sv`.
 - **Line plots of cases**: CO₂ level sets the line style and hosing sets the
-  color: 1×, 2×, 4×CO₂ = solid, dashed, dotted; −0.3, 0, +0.3 Sv = red, black,
+  color: 1×, 2×, 4×CO₂ = solid, dotted, dashed; −0.3, 0, +0.3 Sv = red, black,
   blue. Use `output.case_line_style(case)` (constants `output.CO2_LINESTYLE`,
   `output.HOSING_COLOR`).
 - **Scatter plots of cases**: hosing sets the color exactly as for lines
@@ -156,7 +162,11 @@ rather than hiding them.
   Case panels use their hosing color (`output.HOSING_COLOR`); non-case panels are
   black. Draw a panel with `output.draw_zonal_statistics(ax, field, color)` and a
   page with `output.plot_zonal_grid`. Case-grid zonal pages add a panel overlaying
-  all nine zonal means in `case_line_style`, on its own y range.
+  all nine zonal means in `case_line_style`, on its own y range. Exception: a map
+  page whose maps each carry a zonal strip on their right (zonal mean + 5–95% band,
+  plus thin land (green) and ocean (blue) zonal means,
+  drawn against the map's projected latitude with `output.draw_zonal_strip`, as in
+  `output.plot_co2_amoc_differences`) needs no following zonal page.
 - **Shared axis ranges**: Unless a plot specifies otherwise, panels of a
   multi-panel figure whose axes carry the same units use the same axis range on
   those axes (`plt.subplots(..., sharex=True, sharey=True)`, or one explicit range

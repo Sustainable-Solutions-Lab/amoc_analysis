@@ -1,9 +1,10 @@
-"""Plot regression-coefficient maps with significance stippling.
+"""Plot regression-coefficient maps with significance contours.
 
 Coefficient maps use a diverging colormap with symmetric bounds (white = 0, per
 the project plotting conventions) and simplified Natural Earth coastlines
-(``draw_coastlines``). Cells where the coefficient is not significant at
-p < 0.05 are stippled with hatching.
+(``draw_coastlines``). Where a field is significant (p <= 0.05) it is also
+contoured at its colorbar ticks (``contour_significant``): colors plus contours
+mark significant cells, colors alone cells that are not.
 """
 
 import matplotlib
@@ -73,7 +74,7 @@ def centered_lon(da):
     The CAM grid runs 0..357.5 E, so drawn as is its wrap point lands on the
     central meridian of the Greenwich-centered map projection, leaving a thin
     unfilled stripe at 0 deg. Relabeled, the wrap point moves to +/-180 deg, the
-    map's outer edge. ``draw_field`` applies it; contour and stippling calls on a
+    map's outer edge. ``draw_field`` applies it; contour calls on a
     map need it too.
     """
     return da.assign_coords(lon=(da["lon"] + 180) % 360 - 180).sortby("lon")
@@ -100,9 +101,9 @@ def draw_field(ax, da, **kwargs):
     return ax.pcolormesh(corners[..., 0], corners[..., 1], values, shading="flat", **kwargs)
 
 # Line-plot convention for cases: CO2 level sets the line style (1x solid,
-# 2x dashed, 4x dotted) and hosing sets the color (-0.3 Sv red, 0 black,
+# 2x dotted, 4x dashed) and hosing sets the color (-0.3 Sv red, 0 black,
 # +0.3 Sv blue).
-CO2_LINESTYLE = {1: "-", 2: "--", 4: ":"}
+CO2_LINESTYLE = {1: "-", 2: ":", 4: "--"}
 HOSING_COLOR = {-0.3: "red", 0.0: "black", 0.3: "blue"}
 
 
@@ -151,7 +152,7 @@ def symmetric_bound(values):
 # out panel for panel like it, showing the statistics over longitude at each
 # latitude (``data_loader.zonal_statistics``) on a sine-of-latitude axis, so equal
 # widths are equal areas. The statistics are told apart by line weight and fill,
-# never by dashes (dashes and dots mean 2x and 4xCO2 in the case line convention).
+# never by dashes (dots and dashes mean 2x and 4xCO2 in the case line convention).
 # Case panels take their case's hosing color; other panels are ZONAL_NEUTRAL_COLOR.
 # Latitude ticks nearly evenly spaced in sin(latitude) (0, 0.26, 0.5, 0.77, 1), so
 # the pole labels have as much room as the rest (90° and 60° would crowd).
@@ -257,28 +258,43 @@ def _save_figure(fig, out_path=None, pdf=None, dpi=300):
     plt.close(fig)
 
 
-def draw_stippling(ax, pvalue):
-    """Stipple the cells of map ``ax`` where the (lat, lon) ``pvalue`` exceeds
-    ``SIGNIFICANCE_P`` (not significant); NaN p-values are left unstippled.
+# Significance on maps: the field is contoured at its colorbar ticks
+# (``colorbar_levels``) only where p <= SIGNIFICANCE_P, so colors plus contours mark
+# significant cells and colors alone cells that are not. Lines are solid (dashes
+# mean CO2 level in this project's figures).
+SIGNIFICANT_CONTOUR_STYLE = {"colors": "black", "linewidths": 0.4, "linestyles": "solid"}
+COLORBAR_MAX_TICKS = 8
 
-    As in ``draw_field``, the -180 column is repeated at +180 so the hatching has
+
+def colorbar_levels(vmin, vmax):
+    """Round tick values within [``vmin``, ``vmax``]: a map's colorbar ticks and the
+    levels of its significance contours."""
+    ticks = MaxNLocator(nbins=COLORBAR_MAX_TICKS).tick_values(vmin, vmax)
+    return ticks[(ticks >= vmin) & (ticks <= vmax)]
+
+
+def contour_significant(ax, field, pvalue, levels):
+    """Contour the ``(lat, lon)`` ``field`` on map ``ax`` at ``levels``, only where
+    ``pvalue`` <= ``SIGNIFICANCE_P`` (cells with NaN p-values are left out).
+
+    As in ``draw_field``, the -180 column is repeated at +180 so the contours have
     no gap at the map edge."""
-    pvalue = centered_lon(pvalue)
-    not_significant = (pvalue > SIGNIFICANCE_P).values.astype(float)
-    ax.contourf(
-        np.append(pvalue["lon"].values, 180.0),
-        pvalue["lat"],
-        np.concatenate([not_significant, not_significant[:, :1]], axis=1),
-        levels=[0.5, 1.5],
-        colors="none",
-        hatches=["...."],
+    field = centered_lon(field.where(pvalue <= SIGNIFICANCE_P))
+    values = field.values
+    ax.contour(
+        np.append(field["lon"].values, 180.0),
+        field["lat"],
+        np.concatenate([values, values[:, :1]], axis=1),
+        levels=levels,
         transform=DATA_CRS,
+        **SIGNIFICANT_CONTOUR_STYLE,
     )
 
 
 def plot_coefficient_map(coef, pvalue, title, units, ax, cmap="RdBu_r", bound=None,
                          rasterized=False):
-    """Draw one coefficient map on a Cartopy ``ax``: filled field + p>0.05 stippling.
+    """Draw one coefficient map on a Cartopy ``ax``: filled field, contoured at its
+    colorbar ticks where p <= 0.05 (``contour_significant``).
 
     ``coef`` and ``pvalue`` are 2-D (lat, lon) DataArrays. ``cmap`` is a diverging
     colormap (white = 0); use ``RdBu_r`` for temperature (warm = red) and ``RdBu``
@@ -287,15 +303,18 @@ def plot_coefficient_map(coef, pvalue, title, units, ax, cmap="RdBu_r", bound=No
     ``rasterized`` the filled field (the heavy artist) is embedded as raster while
     axes/text stay vector -- keeps many-panel PDFs small. Returns the mappable.
     """
+    coef = centered_lon(coef)
     b = bound if bound is not None else symmetric_bound(coef.values)
     mesh = draw_field(ax, coef, cmap=cmap, vmin=-b, vmax=b, rasterized=rasterized)
-    draw_stippling(ax, pvalue)
+    levels = colorbar_levels(-b, b)
+    contour_significant(ax, coef, centered_lon(pvalue), levels)
     draw_coastlines(ax)
     ax.set_global()
     gl = ax.gridlines(draw_labels=True, linewidth=0.3, color="gray", alpha=0.4)
     gl.top_labels = gl.right_labels = False
     ax.set_title(title, fontsize=10)
-    cbar = ax.figure.colorbar(mesh, ax=ax, orientation="vertical", shrink=0.7, pad=0.03)
+    cbar = ax.figure.colorbar(mesh, ax=ax, orientation="vertical", shrink=0.7, pad=0.03,
+                              ticks=levels)
     cbar.set_label(units)
     return mesh
 
@@ -305,7 +324,8 @@ def plot_set(fit, set_def, run_label, pdf, predictand, centering=None):
     ``pdf`` (an open ``PdfPages`` book), followed by a page of their zonal
     statistics in the same layout.
 
-    One panel per predictor (the intercept is omitted). Stippling marks p > 0.05.
+    One panel per predictor (the intercept is omitted). Contours (at the colorbar
+    ticks) mark cells where p <= 0.05.
     Panels whose coefficients carry the same units share one symmetric color scale
     and, on the zonal page, one y range.
     ``predictand`` is a ``regression.PREDICTANDS`` entry (label + units), used for
@@ -359,7 +379,8 @@ def plot_set(fit, set_def, run_label, pdf, predictand, centering=None):
     set_title = f"Set {set_def['number']}: {plabel} ~ {preds}  |  {run_label}"
     fig.suptitle(
         f"{set_title}\n"
-        f"stippling: p > {SIGNIFICANCE_P} (nominal OLS; autocorrelation not corrected)"
+        f"contours: p ≤ {SIGNIFICANCE_P}, color only: not significant "
+        f"(nominal OLS; autocorrelation not corrected)"
         f"{centering_line}",
         fontsize=11,
     )
@@ -849,6 +870,36 @@ def plot_tglob_vs_amoc(annual, decadal, out_path):
     plt.close(fig)
 
 
+def plot_amoc_timeseries(annual, decadal, out_path):
+    """AMOC strength against year, one line per case.
+
+    ``annual`` and ``decadal`` are pooled predictor Datasets from
+    ``regression.build_pooled`` (block=None and block=10), whose ``sample``
+    coordinate holds the calendar year (the block midpoint for decadal means). Each
+    case is a thin line through its annual values and a bold line through its
+    10-year block means, styled by ``case_line_style``.
+    """
+    fig, ax = plt.subplots(figsize=(9, 5))
+    for case in dl.EXPERIMENTS:
+        style = case_line_style(case)
+        a = annual.isel(sample=annual["run"].values == case)
+        d = decadal.isel(sample=decadal["run"].values == case)
+        ax.plot(a["sample"], a["amoc_strength"], lw=0.6, alpha=0.35, color=style["color"])
+        ax.plot(d["sample"], d["amoc_strength"], lw=2.0, label=case, **style)
+    ax.set_xlabel("year")
+    ax.set_ylabel("AMOC strength at 26.5°N (Sv)")
+    ax.set_title(
+        "CESM1.2 AMOC strength at 26.5°N, 2051–2150\n"
+        "bold: 10-year block means (at block midpoints); thin: annual means",
+        fontsize=10,
+    )
+    ax.grid(alpha=0.3)
+    ax.legend(fontsize=8, ncol=3, handlelength=3, loc="upper center",
+              bbox_to_anchor=(0.5, -0.12), frameon=False)
+    fig.savefig(out_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
 # The four pages drawn per variable by ``plot_case_grid_book``: (page title, map
 # of the (co2, hosing) grid to the plotted field). Differences broadcast over the
 # grid, so the reference panels of each difference page are identically zero.
@@ -911,7 +962,7 @@ CO2_AMOC_RECONSTRUCTED_TITLE = "reconstructed {co2}xCO2 field: sum of rows 1-4"
 
 # A panel of ``plot_field_and_change_grid``: ``change`` panels (differences) share a
 # symmetric diverging scale, the others (absolute fields) a ``viridis`` scale;
-# ``pvalue`` (or None) stipples p > SIGNIFICANCE_P.
+# panels with a ``pvalue`` (else None) are contoured where p <= SIGNIFICANCE_P.
 MapPanel = namedtuple("MapPanel", "title field change pvalue")
 
 
@@ -933,6 +984,7 @@ def plot_field_and_change_grid(panels, shape, name, units, cmap, title, pdf):
     bound = symmetric_bound(np.concatenate([f.values.ravel() for f in fields[True]]))
     style = {False: {"cmap": "viridis", "vmin": low, "vmax": high},
              True: {"cmap": cmap, "vmin": -bound, "vmax": bound}}
+    levels = {change: colorbar_levels(s["vmin"], s["vmax"]) for change, s in style.items()}
     mean_format = {False: "{:.4g}", True: "{:+.3g}"}
 
     fig, axes = plt.subplots(*shape, figsize=(5.2 * shape[1], 2.9 * shape[0] + 1.6),
@@ -943,7 +995,7 @@ def plot_field_and_change_grid(panels, shape, name, units, cmap, title, pdf):
         ax = axes[i, j]
         meshes[panel.change] = draw_field(ax, panel.field, rasterized=True, **style[panel.change])
         if panel.pvalue is not None:
-            draw_stippling(ax, panel.pvalue)
+            contour_significant(ax, panel.field, panel.pvalue, levels[panel.change])
         draw_coastlines(ax)
         ax.set_global()
         mean_text = mean_format[panel.change].format(float(dl.global_mean(panel.field)))
@@ -951,7 +1003,7 @@ def plot_field_and_change_grid(panels, shape, name, units, cmap, title, pdf):
                      fontsize=9)
     for change, mesh in meshes.items():
         fig.colorbar(mesh, ax=axes, orientation="horizontal", shrink=0.5, pad=0.01,
-                     aspect=40).set_label(labels[change])
+                     aspect=40, ticks=levels[change]).set_label(labels[change])
     fig.suptitle(title, fontsize=11)
     _save_figure(fig, pdf=pdf, dpi=CASE_GRID_RASTER_DPI)
 
@@ -968,7 +1020,7 @@ def plot_co2_amoc_decomposition(decomposition, name, units, cmap, title, pdf):
     """Map page (plus zonal page) of a ``regression.co2_amoc_decomposition`` result:
     one column per ``CO2_AMOC_COLUMNS`` level, headed by its Δlog2(CO2), ΔAMOC and ΔA,
     and five rows: the fitted 1xCO2 field, the ``CO2_AMOC_TERM_ROWS`` terms
-    (stippled where their coefficient's p > ``SIGNIFICANCE_P``) and the
+    (contoured where their coefficient's p <= ``SIGNIFICANCE_P``) and the
     reconstructed field (their sum). Rows 1 and 5 share one absolute scale, rows
     2-4 one diverging scale (``plot_field_and_change_grid``)."""
     panels = {}
@@ -1042,6 +1094,208 @@ def plot_case_grid_zonal_page(field, title, pdf):
     fig.legend(handles=ZONAL_LEGEND_HANDLES, loc="outside lower center", ncol=4, fontsize=8)
     fig.suptitle(f"{title}\nzonal statistics over longitude", fontsize=12)
     _save_figure(fig, pdf=pdf)
+
+
+def projected_latitude(lat):
+    """y coordinate of latitude ``lat`` (deg) in ``PROJECTION`` (Equal Earth y is
+    not proportional to sin(lat)), so a strip beside a map lines up with it."""
+    lat = np.asarray(lat, dtype=float)
+    return PROJECTION.transform_points(DATA_CRS, np.zeros_like(lat), lat)[:, 1]
+
+
+# Thin land / ocean zonal-mean lines on zonal strips, colored to tell them from the
+# black all-longitude mean.
+LAND_OCEAN_STYLE = {
+    "land": {"color": "forestgreen", "lw": 0.9},
+    "ocean": {"color": "royalblue", "lw": 0.9},
+}
+
+
+def land_ocean_zonal_means(field, land):
+    """Zonal means of a ``(lat, lon)`` field over all longitudes, land cells, and
+    ocean cells (``land``: boolean mask from ``data_loader.land_mask``), as a dict
+    keyed ``all`` / ``land`` / ``ocean``. A latitude with no land (or no ocean)
+    gives NaN, a gap in its line."""
+    return {"all": field.mean("lon"), "land": field.where(land).mean("lon"),
+            "ocean": field.where(~land).mean("lon")}
+
+
+def draw_zonal_strip(ax, means, band, ylim, xlim, units, band_color=ZONAL_NEUTRAL_COLOR):
+    """Zonal strip drawn sideways on ``ax`` against the ``PROJECTION`` y of each
+    latitude, so that with ``ylim`` = the neighbouring map's y range the latitudes
+    line up: the shaded ``band`` (a ``(low, high)`` pair of ``lat`` DataArrays) in
+    ``band_color``, the all-longitude mean (thick black) and thin land / ocean
+    means, from ``means`` (a ``land_ocean_zonal_means``-style dict)."""
+    y = projected_latitude(means["all"]["lat"].values)
+    low, high = band
+    ax.fill_betweenx(y, low.values, high.values, color=band_color, **ZONAL_STYLE["band"])
+    for surface, style in LAND_OCEAN_STYLE.items():
+        ax.plot(means[surface].values, y, **style)
+    ax.plot(means["all"].values, y, color=ZONAL_NEUTRAL_COLOR, **ZONAL_STYLE["mean"])
+    ax.axvline(0, color="0.5", lw=0.5)
+    ax.set_ylim(ylim)
+    ax.set_xlim(xlim)
+    ax.set_yticks(projected_latitude(SINE_LATITUDE_TICKS),
+                  [latitude_label(t) for t in SINE_LATITUDE_TICKS], fontsize=7)
+    ax.yaxis.tick_right()
+    ax.tick_params(axis="x", labelsize=7)
+    ax.set_xlabel(units, fontsize=8)
+    ax.grid(alpha=0.3)
+
+
+# Ratio panels (AMOC-weakening effect / CO2 effect): the color scale is fixed at
+# -1..+1, on a colormap distinct from the difference maps' to flag the different
+# (dimensionless) quantity. Beyond it, cells take colors absent from that colormap:
+# RATIO_UNDER_COLOR where the ratio is < -1 (AMOC weakening more than cancels the
+# CO2 effect) and RATIO_OVER_COLOR where it is > +1 (more than doubles it). The
+# strip spans +/-RATIO_STRIP_LIMIT, faintly shaded in those colors beyond +/-1. Its
+# band is a confidence interval, not a spread over longitude, so it is shaded in
+# its own color. Cells where the ratio is not meaningful are masked in
+# RATIO_MASK_COLOR (not contoured): the CO2 effect (the divisor) is not significant,
+# or is significant but below RATIO_MIN_DIVISOR_FRACTION of its area-weighted median
+# |CO2 effect| (a near-zero divisor; for tas, no cell is that small). Cells where only
+# the AMOC effect is not significant stay shown: their ratio is near zero, meaning
+# AMOC weakening has no detectable effect there.
+RATIO_BOUND = 1.0
+RATIO_UNDER_COLOR = "teal"
+RATIO_OVER_COLOR = "crimson"
+RATIO_MASK_COLOR = "lightgrey"
+RATIO_MIN_DIVISOR_FRACTION = 0.1
+RATIO_CMAP = plt.colormaps["PuOr_r"].with_extremes(under=RATIO_UNDER_COLOR,
+                                                   over=RATIO_OVER_COLOR,
+                                                   bad=RATIO_MASK_COLOR)
+RATIO_STRIP_LIMIT = 2.0
+RATIO_STRIP_SHADE_ALPHA = 0.12
+RATIO_BAND_COLOR = "darkorchid"
+RATIO_CONFIDENCE = 0.95
+
+ZONAL_STRIP_LEGEND_HANDLES = [
+    ZONAL_LEGEND_HANDLES[0],
+    *(Line2D([], [], label=f"{surface} mean", **style) for surface, style in LAND_OCEAN_STYLE.items()),
+    ZONAL_LEGEND_HANDLES[2],
+    Patch(facecolor=RATIO_BAND_COLOR, label=f"{100 * RATIO_CONFIDENCE:.0f}% CI of ratio",
+          **ZONAL_STYLE["band"]),
+]
+
+
+def _map_with_strip(fig, map_cell, strip_cell, field, title, cmap, bound, pvalue,
+                    strip_means, strip_band, strip_xlim, units, colorbar_label,
+                    band_color=ZONAL_NEUTRAL_COLOR):
+    """Map of ``field`` on ``±bound`` with its own colorbar (``colorbar_label``;
+    ``units`` labels the strip), contoured at its colorbar ticks where ``pvalue`` <=
+    ``SIGNIFICANCE_P`` (no contours for ``pvalue=None``), and a zonal strip (``draw_zonal_strip``)
+    to its right. NaN cells take ``cmap``'s "bad" color."""
+    ax = fig.add_subplot(map_cell, projection=PROJECTION)
+    mesh = draw_field(ax, field, cmap=cmap, vmin=-bound, vmax=bound, rasterized=True)
+    levels = colorbar_levels(-bound, bound)
+    if pvalue is not None:
+        contour_significant(ax, field, pvalue, levels)
+    draw_coastlines(ax)
+    ax.set_global()
+    ax.set_title(title, fontsize=9)
+    cbar = fig.colorbar(mesh, ax=ax, orientation="horizontal", shrink=0.8, pad=0.03,
+                        aspect=30, extend="both", ticks=levels)
+    cbar.set_label(colorbar_label, fontsize=8)
+    cbar.ax.tick_params(labelsize=7)
+    draw_zonal_strip(fig.add_subplot(strip_cell), strip_means, strip_band, ax.get_ylim(),
+                     strip_xlim, units, band_color)
+
+
+def plot_co2_amoc_differences(fields, pvalues, ratio_conf_int, out_path):
+    """One-page 2 x 2 PDF decomposing the 4xCO2 response with and without AMOC
+    weakening, each map with a zonal strip (``draw_zonal_strip``).
+
+    ``fields`` is a ``data_loader.case_annual_fields`` result for
+    ``data_loader.CO2_AMOC_CASES``; panels are differences of its time means:
+
+        4xCO2 - 1xCO2 (total)              4xCO2 - 4xCO2_m03Sv (AMOC effect)
+        4xCO2_m03Sv - 1xCO2 (CO2 effect)   AMOC effect / CO2 effect
+
+    ``pvalues`` maps ``total`` / ``amoc_effect`` / ``co2_effect`` to ``(lat, lon)``
+    p-values of those differences; each difference map is contoured at its colorbar
+    ticks where its difference is significant (p <= ``SIGNIFICANCE_P``). The ratio map
+    is masked where the CO2 effect is not significant or is small (see
+    ``RATIO_MIN_DIVISOR_FRACTION``) and contoured where the AMOC effect is
+    significant, so its contoured cells have both effects significant. The three
+    differences share one symmetric bound (99th percentile of |difference|;
+    ``RdBu`` for water fluxes, else ``RdBu_r``) and one strip range, with bands
+    spanning 5-95% of cells over longitude. The ratio has its own fixed -1..+1
+    scale with distinct colors beyond each end (see ``RATIO_CMAP``); its strip
+    lines are ratios of zonal means and its
+    band is ``ratio_conf_int`` (``low`` / ``high`` on ``lat``, from
+    ``regression.difference_ratio_conf_int`` of the zonal means). Titles give
+    area-weighted global means (for the ratio, the ratio of global means).
+    """
+    units = fields.attrs["units"]
+    land = dl.land_mask(fields["lat"], fields["lon"])
+    means = fields.mean("year")
+    differences = {
+        "total": means.sel(case="4xCO2") - means.sel(case="1xCO2"),
+        "amoc_effect": means.sel(case="4xCO2") - means.sel(case="4xCO2_m03Sv"),
+        "co2_effect": means.sel(case="4xCO2_m03Sv") - means.sel(case="1xCO2"),
+    }
+    divisor_floor = RATIO_MIN_DIVISOR_FRACTION * float(dl.area_weighted_median(
+        abs(differences["co2_effect"])))
+    ratio_meaningful = ((pvalues["co2_effect"] <= SIGNIFICANCE_P)
+                        & (abs(differences["co2_effect"]) >= divisor_floor))
+    ratio = (differences["amoc_effect"] / differences["co2_effect"]).where(ratio_meaningful)
+
+    strip_means = {name: land_ocean_zonal_means(d, land) for name, d in differences.items()}
+    ratio_means = {surface: strip_means["amoc_effect"][surface] / strip_means["co2_effect"][surface]
+                   for surface in strip_means["amoc_effect"]}
+    zonal = {name: dl.zonal_statistics(d) for name, d in differences.items()}
+    bands = {name: (z["low"], z["high"]) for name, z in zonal.items()}
+    diff_bound = symmetric_bound(np.stack([d.values for d in differences.values()]))
+    diff_cmap = "RdBu" if units == dl.WATER_FLUX_UNITS else "RdBu_r"
+    diff_xlim = zonal_range([edge for band in bands.values() for edge in band]
+                            + [m for d in strip_means.values() for m in d.values()])
+
+    def mean_text(field):
+        return value_with_units(f"{float(dl.global_mean(field)):+.3g}", units)
+
+    titles = {
+        "total": "4xCO2 − 1xCO2 (total 4×CO₂ response)",
+        "amoc_effect": "4xCO2 − 4xCO2_m03Sv (AMOC-weakening effect)",
+        "co2_effect": "4xCO2_m03Sv − 1xCO2 (4×CO₂ effect, AMOC ~20 Sv)",
+    }
+    positions = {"total": (0, 0), "amoc_effect": (0, 1), "co2_effect": (1, 0)}
+
+    fig = plt.figure(figsize=(15, 9.5), layout="constrained")
+    gridspec = fig.add_gridspec(2, 4, width_ratios=[4.5, 1, 4.5, 1])
+    for name, (row, col) in positions.items():
+        _map_with_strip(fig, gridspec[row, 2 * col], gridspec[row, 2 * col + 1],
+                        differences[name],
+                        f"{titles[name]}\nglobal mean = {mean_text(differences[name])}",
+                        diff_cmap, diff_bound, pvalues[name], strip_means[name], bands[name],
+                        diff_xlim, units, units)
+    global_ratio = float(dl.global_mean(differences["amoc_effect"])
+                         / dl.global_mean(differences["co2_effect"]))
+    _map_with_strip(fig, gridspec[1, 2], gridspec[1, 3], ratio,
+                    "(4xCO2 − 4xCO2_m03Sv) / (4xCO2_m03Sv − 1xCO2)\n"
+                    f"ratio of global means = {global_ratio:+.3g}\n"
+                    f"grey: CO₂ effect not significant, or |CO₂ effect| < "
+                    f"{RATIO_MIN_DIVISOR_FRACTION:.0%} of its median ({divisor_floor:.2g} {units})",
+                    RATIO_CMAP, RATIO_BOUND, pvalues["amoc_effect"], ratio_means,
+                    (ratio_conf_int["low"], ratio_conf_int["high"]),
+                    (-RATIO_STRIP_LIMIT, RATIO_STRIP_LIMIT), "ratio",
+                    f"ratio ({RATIO_UNDER_COLOR} < −1: AMOC weakening more than cancels the CO₂ "
+                    f"effect; {RATIO_OVER_COLOR} > +1: more than doubles it)",
+                    band_color=RATIO_BAND_COLOR)
+    ratio_strip = fig.axes[-1]
+    ratio_strip.axvspan(-RATIO_STRIP_LIMIT, -RATIO_BOUND, color=RATIO_UNDER_COLOR,
+                        alpha=RATIO_STRIP_SHADE_ALPHA, lw=0)
+    ratio_strip.axvspan(RATIO_BOUND, RATIO_STRIP_LIMIT, color=RATIO_OVER_COLOR,
+                        alpha=RATIO_STRIP_SHADE_ALPHA, lw=0)
+    fig.legend(handles=ZONAL_STRIP_LEGEND_HANDLES, loc="outside lower right", ncol=5,
+               fontsize=8, title="right strips: zonal means; grey band = spread over longitude; "
+               "ratio strip: ratios of zonal means, purple band = CI of the all-longitude ratio "
+               "(delta method, 10-year means); land = Natural Earth 110m", title_fontsize=8)
+    fig.suptitle(f"{fields.name}: {label_with_units(fields.attrs['long_name'], units)}, "
+                 f"CESM1.2 means {fields.attrs['time_mean']}\n"
+                 f"contours: difference significant (Welch t-test on 10-year means, "
+                 f"p ≤ {SIGNIFICANCE_P}); color only: not significant",
+                 fontsize=11)
+    _save_figure(fig, out_path=out_path, dpi=CASE_GRID_RASTER_DPI)
 
 
 def plot_case_grid_book(grid, pdf, rasterized):

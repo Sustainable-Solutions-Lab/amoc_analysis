@@ -179,6 +179,47 @@ CENTERED_BASES = {
 }
 
 
+def difference_pvalue(sample_a, sample_b, block):
+    """Two-sided Welch t-test p-value, per grid cell, that the means of two
+    ``(year, ...)`` samples differ.
+
+    Each sample is first reduced to non-overlapping ``block``-year means
+    (``data_loader.block_average_on_years``), so the test sees ~independent values
+    rather than autocorrelated annual ones (2101-2150 with block = 10: 5 vs 5).
+    """
+    blocks_a = dl.block_average_on_years(sample_a, block)
+    blocks_b = dl.block_average_on_years(sample_b, block)
+    return xr.apply_ufunc(
+        lambda a, b: stats.ttest_ind(a, b, axis=-1, equal_var=False).pvalue,
+        blocks_a, blocks_b, input_core_dims=[["year"], ["year"]], exclude_dims={"year"},
+    )
+
+
+def difference_ratio_conf_int(sample_a, sample_b, sample_c, block, confidence=0.95):
+    """Ratio of mean differences R = (mean a - mean b) / (mean b - mean c), with a
+    delta-method confidence interval, for three independent ``(year, ...)`` samples.
+
+    Each sample is reduced to ``block``-year means (as in ``difference_pvalue``);
+    v_x is the variance of each sample mean (block variance / block count). R's
+    variance is that of the linear combination a - (1 + R) b + R c divided by the
+    squared denominator (b enters both differences, so their covariance, -v_b, is
+    included), and the t quantile uses its Welch-Satterthwaite degrees of freedom.
+    The interval widens without bound as the denominator nears zero. Returns a
+    Dataset of ``ratio``, ``low`` and ``high``.
+    """
+    blocks = [dl.block_average_on_years(sample, block) for sample in (sample_a, sample_b, sample_c)]
+    mean_a, mean_b, mean_c = (b.mean("year") for b in blocks)
+    counts = [b.sizes["year"] for b in blocks]
+    variances = [b.var("year", ddof=1) / n for b, n in zip(blocks, counts)]
+    ratio = (mean_a - mean_b) / (mean_b - mean_c)
+    terms = [variance * weight**2 for variance, weight in zip(variances, (1, 1 + ratio, ratio))]
+    combination_variance = sum(terms)
+    dof = combination_variance**2 / sum(term**2 / (n - 1) for term, n in zip(terms, counts))
+    half_width = (xr.apply_ufunc(stats.t.ppf, (1 + confidence) / 2, dof)
+                  * np.sqrt(combination_variance) / abs(mean_b - mean_c))
+    return xr.Dataset({"ratio": ratio, "low": ratio - half_width, "high": ratio + half_width})
+
+
 def build_pooled(runs=None, predictor_union=PREDICTOR_UNION, predictand=None, block=None):
     """Pool a gridded predictand and scalar predictors across runs onto one axis.
 

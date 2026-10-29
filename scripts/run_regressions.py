@@ -4,7 +4,8 @@ Builds one pooled decadal-mean sample (10-year block means of the years with all
 predictors present, across the nine CESM1.2 simulations), then for each selected
 predictor set fits a per-grid-point OLS. Outputs, flat in ``data/output/regression/``:
 
-- ``<var>_coef.pdf`` -- per set, a page of stippled coefficient maps followed by a
+- ``<var>_coef.pdf`` -- per set, a page of coefficient maps (contoured where
+  p <= 0.05) followed by a
   page of their zonal statistics over longitude.
 - ``<var>_coef.nc`` -- each set's fit in its own NetCDF group (``set5``, ``set10``,
   ...; ``regression.set_group``).
@@ -48,8 +49,9 @@ CAVEATS = """Regression outputs: pooled per-grid-point OLS of decadal-mean gridd
 - Coefficient units are [predictand units] / [predictor units] (predictor units:
   Tglob, dT_NS in K; AMOC in Sv).
 - Files (flat in this directory, one pair per variable):
-    * <var>_coef.pdf -- per predictor set, a page of stippled coefficient maps
-      (p > 0.05 hatched) followed by a page of their zonal statistics over
+    * <var>_coef.pdf -- per predictor set, a page of coefficient maps
+      (contoured at the colorbar ticks where p <= 0.05; color alone = not
+      significant) followed by a page of their zonal statistics over
       longitude (mean, median, 5-95% band, min/max vs sine of latitude; all cells).
     * <var>_coef.nc -- one NetCDF group per set (set5, set10, ...) holding coef, se,
       tstat, pvalue on (param, lat, lon) and r2 on (lat, lon); set 10's group

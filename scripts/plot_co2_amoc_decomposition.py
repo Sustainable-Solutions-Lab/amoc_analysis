@@ -19,7 +19,8 @@ run's transformed AMOC minus the control's; rows
   5. sum of rows 1-4: the reconstructed (fitted) nxCO2 field
 
 Rows 1 and 5 share one absolute color scale; rows 2-4 share one symmetric scale
-and are stippled where their coefficient's p > 0.05. The check page is a 3 x 3
+and are contoured at the colorbar ticks where their coefficient's p <= 0.05
+(color alone: not significant). The check page is a 3 x 3
 grid: rows 1x, 2x, 4xCO2 (no hosing), columns simulated, reconstructed, and
 simulated minus reconstructed. Each map page is followed by its zonal-statistics
 page. Outputs, in ``data/output/co2_amoc_decomposition/``:
@@ -98,7 +99,7 @@ def run_for_variable(name, amoc_grid, amoc_power):
         plot_co2_amoc_decomposition(
             decomposition, name, units, cmap,
             f"{header}\ndecomposition of the nxCO2 (no hosing) response; "
-            f"stippling: coefficient p > {SIGNIFICANCE_P}", pdf)
+            f"contours: coefficient p ≤ {SIGNIFICANCE_P}; color only: not significant", pdf)
         plot_co2_amoc_reconstruction_check(
             actual, decomposition["fitted"], name, units, cmap,
             f"{header}\nno-hosing runs: simulated vs reconstructed from the regression", pdf)
