@@ -50,8 +50,8 @@ CAVEATS = """Regression outputs: pooled per-grid-point OLS of decadal-mean gridd
   Tglob, dT_NS in K; AMOC in Sv).
 - Files (flat in this directory, one pair per variable):
     * <var>_coef.pdf -- per predictor set, a page of coefficient maps
-      (contoured at the colorbar ticks where p <= 0.05; color alone = not
-      significant) followed by a page of their zonal statistics over
+      (contoured at the colorbar ticks: black where p <= 0.05, light grey
+      where not) followed by a page of their zonal statistics over
       longitude (mean, median, 5-95% band, min/max vs sine of latitude; all cells).
     * <var>_coef.nc -- one NetCDF group per set (set5, set10, ...) holding coef, se,
       tstat, pvalue on (param, lat, lon) and r2 on (lat, lon); set 10's group

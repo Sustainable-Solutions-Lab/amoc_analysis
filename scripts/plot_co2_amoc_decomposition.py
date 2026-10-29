@@ -7,7 +7,7 @@ n = 9, df = 5):
     field = a + b*C + c*A + d*C*A,   C = log2(CO2 multiple),   A = T(AMOC) - T(AMOC(1xCO2))
 
 with AMOC the run's 2101-2150 mean at 26.5N (Sv) and T its Box-Cox transform of
-power ``--amoc-power`` (``regression.amoc_transform``; default 0 = ln AMOC, 1 =
+power ``--amoc-power`` (``regression.amoc_transform``; default 0 = log2 AMOC, 1 =
 linear). Both predictors are zero at the 1xCO2 control (``regression.fit_co2_amoc``). The decomposition page is a 5 x 2 map
 grid: columns 2xCO2 and 4xCO2 (no hosing), each with dC = log2(n) and dA = that
 run's transformed AMOC minus the control's; rows
@@ -19,8 +19,8 @@ run's transformed AMOC minus the control's; rows
   5. sum of rows 1-4: the reconstructed (fitted) nxCO2 field
 
 Rows 1 and 5 share one absolute color scale; rows 2-4 share one symmetric scale
-and are contoured at the colorbar ticks where their coefficient's p <= 0.05
-(color alone: not significant). The check page is a 3 x 3
+and are contoured at the colorbar ticks, black where their coefficient's p <= 0.05
+and light grey where not. The check page is a 3 x 3
 grid: rows 1x, 2x, 4xCO2 (no hosing), columns simulated, reconstructed, and
 simulated minus reconstructed. Each map page is followed by its zonal-statistics
 page. Outputs, in ``data/output/co2_amoc_decomposition/``:
@@ -28,8 +28,10 @@ page. Outputs, in ``data/output/co2_amoc_decomposition/``:
 - ``<var>_2101-2150_<T>.pdf`` -- the decomposition and check map pages, each
   followed by its zonal-statistics page (4 pages).
 - ``<var>_<T>_fit.nc`` -- the per-cell fit (coef, se, tstat, pvalue, r2).
+- ``book_2101-2150_<T>.pdf`` -- all the run's variable PDFs merged in order (pages
+  copied, not re-rendered, so memory stays per-variable).
 
-``<T>`` names the AMOC transform (``amoc_file_tag``): ``lnAMOC``, ``AMOC`` (linear)
+``<T>`` names the AMOC transform (``amoc_file_tag``): ``log2AMOC``, ``AMOC`` (linear)
 or ``AMOCpow<p>``, so runs with different powers sit side by side.
 
 ``--variables`` takes set names from ``data_loader.VARIABLE_SETS`` (``minimal`` =
@@ -46,11 +48,12 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from matplotlib.backends.backend_pdf import PdfPages
+from pypdf import PdfWriter
 
 import data_loader as dl
 import regression as reg
 from output import (
-    SIGNIFICANCE_P,
+    SIGNIFICANCE_CONTOUR_KEY,
     label_with_units,
     plot_co2_amoc_decomposition,
     plot_co2_amoc_reconstruction_check,
@@ -62,12 +65,13 @@ FIRST_YEAR, LAST_YEAR = 2101, 2150
 
 
 def amoc_file_tag(power):
-    """File-name tag for the AMOC transform: ``lnAMOC``, ``AMOC`` or ``AMOCpow<p>``."""
-    return {0: "lnAMOC", 1: "AMOC"}.get(power, f"AMOCpow{power:g}")
+    """File-name tag for the AMOC transform: ``log2AMOC``, ``AMOC`` or ``AMOCpow<p>``."""
+    return {0: "log2AMOC", 1: "AMOC"}.get(power, f"AMOCpow{power:g}")
 
 
 def run_for_variable(name, amoc_grid, amoc_power):
-    """Fit, decompose and plot variable ``name``; write its PDF and fit NetCDF."""
+    """Fit, decompose and plot variable ``name``; write its PDF and fit NetCDF and
+    return the PDF's path."""
     grid = dl.case_grid_time_mean(name, FIRST_YEAR, LAST_YEAR)
     fit = reg.fit_co2_amoc(grid, amoc_grid, amoc_power)
     transform = fit.attrs["amoc_transform"]
@@ -99,28 +103,36 @@ def run_for_variable(name, amoc_grid, amoc_power):
         plot_co2_amoc_decomposition(
             decomposition, name, units, cmap,
             f"{header}\ndecomposition of the nxCO2 (no hosing) response; "
-            f"contours: coefficient p ≤ {SIGNIFICANCE_P}; color only: not significant", pdf)
+            f"rows 2-4, coefficient significance: {SIGNIFICANCE_CONTOUR_KEY}", pdf)
         plot_co2_amoc_reconstruction_check(
             actual, decomposition["fitted"], name, units, cmap,
             f"{header}\nno-hosing runs: simulated vs reconstructed from the regression", pdf)
     nc_path = os.path.join(OUT_DIR, f"{name}_{tag}_fit.nc")
     fit.to_netcdf(nc_path)
     print(f"[{name}] wrote {pdf_path}\n[{name}] wrote {nc_path}")
+    return pdf_path
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
         "--amoc-power", type=float, default=reg.DEFAULT_AMOC_POWER, metavar="P",
-        help="Box-Cox power of the AMOC transform (0 = ln AMOC, the default; 1 = linear)",
+        help="Box-Cox power of the AMOC transform (0 = log2 AMOC, the default; 1 = linear)",
     )
     dl.add_variables_argument(parser)
     args = parser.parse_args()
     os.makedirs(OUT_DIR, exist_ok=True)
     amoc_grid = dl.case_grid_amoc_mean(FIRST_YEAR, LAST_YEAR)
     print(f"AMOC means {FIRST_YEAR}-{LAST_YEAR} (Sv):\n{amoc_grid.to_pandas().round(2)}")
-    for name in dl.resolve_variables(args.variables):
-        run_for_variable(name, amoc_grid, args.amoc_power)
+    pdf_paths = [run_for_variable(name, amoc_grid, args.amoc_power)
+                 for name in dl.resolve_variables(args.variables)]
+    book_path = os.path.join(
+        OUT_DIR, f"book_{FIRST_YEAR}-{LAST_YEAR}_{amoc_file_tag(args.amoc_power)}.pdf")
+    writer = PdfWriter()
+    for path in pdf_paths:
+        writer.append(path)
+    writer.write(book_path)
+    print(f"wrote {book_path}  ({len(pdf_paths)} variables)")
 
 
 if __name__ == "__main__":

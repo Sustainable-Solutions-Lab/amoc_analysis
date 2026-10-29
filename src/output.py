@@ -2,9 +2,9 @@
 
 Coefficient maps use a diverging colormap with symmetric bounds (white = 0, per
 the project plotting conventions) and simplified Natural Earth coastlines
-(``draw_coastlines``). Where a field is significant (p <= 0.05) it is also
-contoured at its colorbar ticks (``contour_significant``): colors plus contours
-mark significant cells, colors alone cells that are not.
+(``draw_coastlines``). Fields with p-values are also
+contoured at their colorbar ticks (``contour_significant``): black where p <= 0.05,
+light grey where not.
 """
 
 import matplotlib
@@ -15,10 +15,13 @@ from collections import namedtuple
 
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
+import contourpy
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 import shapely
+import xarray as xr
+from matplotlib.collections import LineCollection
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 from matplotlib.ticker import MaxNLocator
@@ -259,10 +262,14 @@ def _save_figure(fig, out_path=None, pdf=None, dpi=300):
 
 
 # Significance on maps: the field is contoured at its colorbar ticks
-# (``colorbar_levels``) only where p <= SIGNIFICANCE_P, so colors plus contours mark
-# significant cells and colors alone cells that are not. Lines are solid (dashes
-# mean CO2 level in this project's figures).
-SIGNIFICANT_CONTOUR_STYLE = {"colors": "black", "linewidths": 0.4, "linestyles": "solid"}
+# (``colorbar_levels``) in black where p <= SIGNIFICANCE_P and in light grey where it
+# is not, so small significant areas stand out. Lines are solid (dashes mean CO2 level in this project's figures).
+SIGNIFICANT_CONTOUR_COLOR = "black"
+INSIGNIFICANT_CONTOUR_COLOR = "0.75"
+SIGNIFICANCE_CONTOUR_WIDTH = 0.4
+SIGNIFICANCE_CONTOUR_KEY = (
+    f"black contours: p ≤ {SIGNIFICANCE_P}; light grey contours: not significant"
+)
 COLORBAR_MAX_TICKS = 8
 
 
@@ -274,27 +281,40 @@ def colorbar_levels(vmin, vmax):
 
 
 def contour_significant(ax, field, pvalue, levels):
-    """Contour the ``(lat, lon)`` ``field`` on map ``ax`` at ``levels``, only where
-    ``pvalue`` <= ``SIGNIFICANCE_P`` (cells with NaN p-values are left out).
+    """Contour the ``(lat, lon)`` ``field`` on map ``ax`` at ``levels``: black where
+    ``pvalue`` <= ``SIGNIFICANCE_P``, light grey where it is not.
 
-    As in ``draw_field``, the -180 column is repeated at +180 so the contours have
-    no gap at the map edge."""
-    field = centered_lon(field.where(pvalue <= SIGNIFICANCE_P))
-    values = field.values
-    ax.contour(
-        np.append(field["lon"].values, 180.0),
-        field["lat"],
-        np.concatenate([values, values[:, :1]], axis=1),
-        levels=levels,
-        transform=DATA_CRS,
-        **SIGNIFICANT_CONTOUR_STYLE,
-    )
+    The full field is contoured once (``contourpy``) and each line segment is
+    colored by the p-value of the grid cell nearest its midpoint, so a contour runs
+    unbroken and changes color at the edge of the significant region. Segments over
+    cells with NaN p-values are left out. As in ``draw_field``, the -180 column is
+    repeated at +180 (no gap at the map edge) and the vertices are projected here."""
+    field, pvalue = centered_lon(field), centered_lon(pvalue)
+    values = np.concatenate([field.values, field.values[:, :1]], axis=1)
+    generator = contourpy.contour_generator(np.append(field["lon"].values, 180.0),
+                                            field["lat"].values, np.ma.masked_invalid(values))
+    segments = np.concatenate(
+        [np.stack([line[:-1], line[1:]], axis=1)
+         for level in levels for line in generator.lines(level)] + [np.empty((0, 2, 2))])
+    midpoints = segments.mean(axis=1)
+    segment_pvalue = pvalue.sel(lon=xr.DataArray(midpoints[:, 0]),
+                                lat=xr.DataArray(midpoints[:, 1]), method="nearest").values
+    keep = ~np.isnan(segment_pvalue)
+    significant = segment_pvalue[keep] <= SIGNIFICANCE_P
+    order = np.argsort(significant, kind="stable")  # grey first, black drawn on top
+    projected = ax.projection.transform_points(DATA_CRS, segments[keep, :, 0],
+                                               segments[keep, :, 1])[order, :, :2]
+    ax.add_collection(LineCollection(
+        projected,
+        colors=np.where(significant[order], SIGNIFICANT_CONTOUR_COLOR,
+                        INSIGNIFICANT_CONTOUR_COLOR),
+        linewidths=SIGNIFICANCE_CONTOUR_WIDTH, linestyles="solid"), autolim=False)
 
 
 def plot_coefficient_map(coef, pvalue, title, units, ax, cmap="RdBu_r", bound=None,
                          rasterized=False):
     """Draw one coefficient map on a Cartopy ``ax``: filled field, contoured at its
-    colorbar ticks where p <= 0.05 (``contour_significant``).
+    colorbar ticks, black where p <= 0.05 and light grey elsewhere (``contour_significant``).
 
     ``coef`` and ``pvalue`` are 2-D (lat, lon) DataArrays. ``cmap`` is a diverging
     colormap (white = 0); use ``RdBu_r`` for temperature (warm = red) and ``RdBu``
@@ -379,7 +399,7 @@ def plot_set(fit, set_def, run_label, pdf, predictand, centering=None):
     set_title = f"Set {set_def['number']}: {plabel} ~ {preds}  |  {run_label}"
     fig.suptitle(
         f"{set_title}\n"
-        f"contours: p ≤ {SIGNIFICANCE_P}, color only: not significant "
+        f"{SIGNIFICANCE_CONTOUR_KEY} "
         f"(nominal OLS; autocorrelation not corrected)"
         f"{centering_line}",
         fontsize=11,
@@ -950,19 +970,20 @@ def plot_case_grid_page(field, title, cmap, vmin, vmax, pdf, rasterized):
 # CO2 x AMOC decomposition book (``scripts/plot_co2_amoc_decomposition.py``). The
 # decomposition page has one column per decomposed CO2 multiple (no hosing) and
 # five rows: the fitted 1xCO2 field (a), the three CO2_AMOC_TERM_ROWS, and their
-# sum, the reconstructed nxCO2 field. Titles are formatted with the column's ``co2``.
+# sum, the reconstructed nxCO2 field. Titles are formatted with the column's ``co2``
+# and the AMOC transform's name ``amoc`` (``regression.amoc_transform_label``).
 CO2_AMOC_COLUMNS = [2, 4]
 CO2_AMOC_TERM_ROWS = [  # (``regression.fit_co2_amoc`` parameter, row title)
     ("log2_co2", "CO2 effect at 1xCO2 AMOC: b·Δlog2(CO2)"),
-    ("amoc_anomaly", "AMOC effect at 1xCO2: c·ΔA"),
-    ("log2_co2.amoc_anomaly", "nonlinear: d·Δlog2(CO2)·ΔA"),
+    ("amoc_anomaly", "AMOC effect at 1xCO2: c·Δ{amoc}"),
+    ("log2_co2.amoc_anomaly", "nonlinear: d·Δlog2(CO2)·Δ{amoc}"),
 ]
 CO2_AMOC_BASELINE_TITLE = "fitted 1xCO2 field: a"
 CO2_AMOC_RECONSTRUCTED_TITLE = "reconstructed {co2}xCO2 field: sum of rows 1-4"
 
 # A panel of ``plot_field_and_change_grid``: ``change`` panels (differences) share a
 # symmetric diverging scale, the others (absolute fields) a ``viridis`` scale;
-# panels with a ``pvalue`` (else None) are contoured where p <= SIGNIFICANCE_P.
+# panels with a ``pvalue`` (else None) get significance contours (``contour_significant``).
 MapPanel = namedtuple("MapPanel", "title field change pvalue")
 
 
@@ -1018,22 +1039,24 @@ def plot_field_and_change_grid(panels, shape, name, units, cmap, title, pdf):
 
 def plot_co2_amoc_decomposition(decomposition, name, units, cmap, title, pdf):
     """Map page (plus zonal page) of a ``regression.co2_amoc_decomposition`` result:
-    one column per ``CO2_AMOC_COLUMNS`` level, headed by its Δlog2(CO2), ΔAMOC and ΔA,
+    one column per ``CO2_AMOC_COLUMNS`` level, headed by its Δlog2(CO2), ΔAMOC and the
+    change in transformed AMOC (e.g. Δlog2(AMOC)),
     and five rows: the fitted 1xCO2 field, the ``CO2_AMOC_TERM_ROWS`` terms
     (contoured where their coefficient's p <= ``SIGNIFICANCE_P``) and the
     reconstructed field (their sum). Rows 1 and 5 share one absolute scale, rows
     2-4 one diverging scale (``plot_field_and_change_grid``)."""
+    amoc = decomposition.attrs["amoc_transform"]
     panels = {}
     for j, co2 in enumerate(CO2_AMOC_COLUMNS):
         column = decomposition.sel(co2=co2)
         header = (f"{co2}xCO2: Δlog2(CO2) = {float(column['delta_log2_co2']):g}, "
                   f"ΔAMOC = {float(column['delta_amoc']):+.2f} Sv,\n"
-                  f"ΔA = Δ{decomposition.attrs['amoc_transform']} = "
+                  f"Δ{amoc} = "
                   f"{float(column['delta_amoc_transformed']):+.3g}")
         panels[0, j] = MapPanel(f"{header}\n{CO2_AMOC_BASELINE_TITLE}",
                                 column["contribution"].sel(param="intercept"), False, None)
         for i, (param, row_title) in enumerate(CO2_AMOC_TERM_ROWS, start=1):
-            panels[i, j] = MapPanel(row_title, column["contribution"].sel(param=param), True,
+            panels[i, j] = MapPanel(row_title.format(amoc=amoc), column["contribution"].sel(param=param), True,
                                     column["pvalue"].sel(param=param))
         panels[len(CO2_AMOC_TERM_ROWS) + 1, j] = MapPanel(
             CO2_AMOC_RECONSTRUCTED_TITLE.format(co2=co2), column["fitted"], False, None)
@@ -1182,8 +1205,8 @@ def _map_with_strip(fig, map_cell, strip_cell, field, title, cmap, bound, pvalue
                     strip_means, strip_band, strip_xlim, units, colorbar_label,
                     band_color=ZONAL_NEUTRAL_COLOR):
     """Map of ``field`` on ``±bound`` with its own colorbar (``colorbar_label``;
-    ``units`` labels the strip), contoured at its colorbar ticks where ``pvalue`` <=
-    ``SIGNIFICANCE_P`` (no contours for ``pvalue=None``), and a zonal strip (``draw_zonal_strip``)
+    ``units`` labels the strip), with significance contours at its colorbar ticks
+    (``contour_significant``; none for ``pvalue=None``), and a zonal strip (``draw_zonal_strip``)
     to its right. NaN cells take ``cmap``'s "bad" color."""
     ax = fig.add_subplot(map_cell, projection=PROJECTION)
     mesh = draw_field(ax, field, cmap=cmap, vmin=-bound, vmax=bound, rasterized=True)
@@ -1292,8 +1315,8 @@ def plot_co2_amoc_differences(fields, pvalues, ratio_conf_int, out_path):
                "(delta method, 10-year means); land = Natural Earth 110m", title_fontsize=8)
     fig.suptitle(f"{fields.name}: {label_with_units(fields.attrs['long_name'], units)}, "
                  f"CESM1.2 means {fields.attrs['time_mean']}\n"
-                 f"contours: difference significant (Welch t-test on 10-year means, "
-                 f"p ≤ {SIGNIFICANCE_P}); color only: not significant",
+                 f"significance of differences: Welch t-test on 10-year means; "
+                 f"{SIGNIFICANCE_CONTOUR_KEY}",
                  fontsize=11)
     _save_figure(fig, out_path=out_path, dpi=CASE_GRID_RASTER_DPI)
 

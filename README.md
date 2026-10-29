@@ -232,8 +232,8 @@ value never changes in any run over 2051–2150:
   CAM defines no low cloud (not checked cell by cell).
 
 At those cells the fit is exact, so every slope coefficient and its standard error
-are 0, and the t- and p-values are undefined (NaN). They show as uncontoured
-white on the maps.
+are 0, and the t- and p-values are undefined (NaN). They show as white with
+no contours on the maps.
 
 Loader entry points:
 
@@ -359,14 +359,15 @@ zonal-statistics page. The input files carry no land fraction, so land is
 polygons (sampled 5 × 5 per cell; 28.7% of the area, Antarctica included).
 
 The three differences share one symmetric color scale (±99th percentile) and strip
-range, and each is contoured at its colorbar ticks where it is significant: a Welch
+range, and each carries significance contours at its colorbar ticks (black where
+significant, light grey where not): a Welch
 t-test of each run's five 10-year means (`regression.difference_pvalue`), p ≤ 0.05. The ratio
 has its own fixed scale, −1 to +1 on `PuOr_r`, with colors outside that colormap
 beyond each end: teal where the ratio is < −1 (AMOC weakening more than cancels the
 4×CO₂ effect, e.g. tas over the subpolar North Atlantic) and crimson where it is > +1
 (AMOC weakening more than doubles it). The ratio strip spans ±2, faintly shaded teal
-and crimson beyond ±1. The ratio map is contoured where the AMOC effect is
-significant, and masked light grey where
+and crimson beyond ±1. The ratio map's contours show where the AMOC effect is
+significant, and it is masked light grey where
 its divisor is unreliable: the CO₂ effect is not significant, or it is significant but
 smaller than 10% of its area-weighted median magnitude (a near-zero divisor;
 `output.RATIO_MIN_DIVISOR_FRACTION`). The floor removes nothing for tas (median
@@ -438,9 +439,9 @@ the map edge, not at 0°) and a diverging
 colormap with symmetric bounds (white = 0). Water-related fields use `RdBu`, so
 wetter or moister is blue (`regression.WET_IS_BLUE`). All other fields use
 `RdBu_r`, so positive is red. **Significance is shown by contours:** each map is
-contoured at its colorbar ticks only where p ≤ 0.05 (`output.contour_significant`,
-levels from `output.colorbar_levels`), so color plus contours means significant and
-color alone means not significant. This applies to every map with p-values
+contoured at its colorbar ticks (`output.contour_significant`, levels from
+`output.colorbar_levels`), in black where p ≤ 0.05 and in light grey where not, so
+even small significant areas are easy to find. This applies to every map with p-values
 (regression, CO₂ × AMOC decomposition and difference pages).
 
 **Case styling.** Every figure that distinguishes cases uses one convention. Hosing
@@ -666,9 +667,10 @@ df = 5.
 
 AMOC is each run's 2101–2150 mean at 26.5°N (`data_loader.case_grid_amoc_mean`):
 19.85 Sv in the control, 14.76 Sv at 2×CO₂ and 10.13 Sv at 4×CO₂. `T` is a Box–Cox
-transform with power p (`regression.amoc_transform`): (AMOC^p − 1)/p, which becomes
-ln(AMOC) at p = 0. `--amoc-power P` sets p. The **default is p = 0, ln(AMOC)**; p = 1
-is linear in AMOC. Both predictors are measured from the 1×CO₂ control (C is 0 there
+transform with power p (`regression.amoc_transform`): (AMOC^p − 1)/p, whose limit at
+p = 0 is ln(AMOC); we use log2(AMOC) there instead (the same up to a factor of ln 2), so
+A counts halvings of AMOC. `--amoc-power P` sets p. The **default is p = 0,
+log2(AMOC)**; p = 1 is linear in AMOC. Both predictors are measured from the 1×CO₂ control (C is 0 there
 already), so:
 
 - `a` is the fitted control field;
@@ -679,19 +681,19 @@ already), so:
 The Box–Cox scaling only rescales `c` and `d`. The terms `c·A` and `d·C·A`, and so
 the maps, depend on p alone.
 
-**Why ln(AMOC).** We fit one exponent p shared by all grid cells, choosing it to
+**Why log2(AMOC).** We fit one exponent p shared by all grid cells, choosing it to
 minimize the area-weighted global misfit over the 9 runs. The optimum is broad, and
 at p = 0 most of the gain over linear AMOC is already in hand. The table gives each
 variable's global squared misfit relative to linear AMOC (p = 1):
 
-| p | −1 | −0.5 | 0 (ln) | 0.5 | 1 (linear) | 2 |
+| p | −1 | −0.5 | 0 (log) | 0.5 | 1 (linear) | 2 |
 | --- | --- | --- | --- | --- | --- | --- |
 | `tas` | 0.45 | **0.35** | 0.37 | 0.58 | 1.00 | 2.36 |
 | `pr_minus_evap` | **0.79** | 0.80 | 0.83 | 0.90 | 1.00 | 1.26 |
 | `pr` | **0.76** | 0.77 | 0.81 | 0.89 | 1.00 | 1.29 |
 
 So the response to a given AMOC decline (in Sv) grows as AMOC weakens. Equal
-fractional changes give equal responses under ln(AMOC). The regions disagree,
+fractional changes give equal responses under log2(AMOC). The regions disagree,
 though. The subpolar North Atlantic alone prefers p ≈ +0.5 for `tas` and p ≈ +1.5–2
 for `pr` and P − E. That fits sea-ice-edge features that move in space rather than
 scale with AMOC, and the misfit stays largest there for every p. The shape is set
@@ -699,8 +701,9 @@ by few distinct AMOC values: in 2101–2150 all three +0.3 Sv runs sit near 5.8 
 The planned ±0.1 and ±0.2 Sv runs should pin it down.
 
 The **decomposition page** is a 5 × 2 map grid (`output.plot_co2_amoc_decomposition`).
-The columns are 2×CO₂ (ΔC = 1, ΔAMOC = −5.09 Sv, Δln AMOC = −0.296) and 4×CO₂
-(ΔC = 2, ΔAMOC = −9.71 Sv, Δln AMOC = −0.672). The rows are:
+The columns are 2×CO₂ (ΔC = 1, ΔAMOC = −5.09 Sv, Δlog2(AMOC) = −0.428) and 4×CO₂
+(ΔC = 2, ΔAMOC = −9.71 Sv, Δlog2(AMOC) = −0.970). On the page, ΔA is written as
+Δlog2(AMOC) (or as the change in whichever transform is chosen). The rows are:
 
 | Row | Field | Meaning |
 | --- | --- | --- |
@@ -711,16 +714,17 @@ The columns are 2×CO₂ (ΔC = 1, ΔAMOC = −5.09 Sv, Δln AMOC = −0.296) an
 | 5 | rows 1 + 2 + 3 + 4 | reconstructed (fitted) n×CO₂ field |
 
 Rows 1 and 5 share one absolute `viridis` scale. Rows 2–4 share one symmetric
-diverging scale (`RdBu` for water fluxes, else `RdBu_r`) and are contoured at the
-colorbar ticks where the coefficient's p ≤ 0.05 (`regression.co2_amoc_decomposition`).
+diverging scale (`RdBu` for water fluxes, else `RdBu_r`) and carry significance
+contours at the colorbar ticks (black where the coefficient's p ≤ 0.05, light grey
+where not) (`regression.co2_amoc_decomposition`).
 
 The **check page** (`output.plot_co2_amoc_reconstruction_check`) is a 3 × 3 grid
 comparing the no-hosing runs with the regression. Its rows are 1×, 2× and 4×CO₂,
 and its columns are the simulated field, the reconstructed field and simulated minus
 reconstructed. With 4 parameters fit to 9 points the fit does not reproduce each run
-exactly. For `tas` with ln(AMOC), simulated minus fitted global means are +0.12 K
+exactly. For `tas` with log2(AMOC), simulated minus fitted global means are +0.12 K
 (1×), −0.07 K (2×) and +0.16 K (4×); with linear AMOC they are +0.29, +0.13 and
-+0.26 K. The local misfit, up to about 1.5 K with ln(AMOC) (3 K linear), is largest
++0.26 K. The local misfit, up to about 1.5 K with log2(AMOC) (3 K linear), is largest
 in the subpolar North Atlantic and the Arctic.
 
 Every panel title gives its area-weighted global mean. Each map page is followed by
@@ -728,7 +732,7 @@ its zonal-statistics page, on which absolute and change panels have separate y
 ranges, so a book has 4 pages.
 
 Outputs, in `data/output/co2_amoc_decomposition/`. `<T>` names the transform:
-`lnAMOC` (default), `AMOC` (linear) or `AMOCpow<p>`, so runs with different powers
+`log2AMOC` (default), `AMOC` (linear) or `AMOCpow<p>`, so runs with different powers
 sit side by side.
 
 - `<var>_2101-2150_<T>.pdf`: the decomposition and check pages, each followed by its
@@ -736,13 +740,16 @@ sit side by side.
 - `<var>_<T>_fit.nc`: the per-cell fit (`coef`, `se`, `tstat`, `pvalue`, `r2`), with
   `nobs`, `df`, the control's AMOC (`amoc_reference_Sv`), `amoc_power` and
   `amoc_transform` as attributes.
+- `book_2101-2150_<T>.pdf`: every variable's PDF from the run merged in order (4 pages
+  per variable, 188 pages and about 60 MB for all 47). Pages are copied, not
+  re-rendered, so memory stays per-variable.
 
 ```bash
-python scripts/plot_co2_amoc_decomposition.py --variables tas pr_minus_evap                   # ln(AMOC)
+python scripts/plot_co2_amoc_decomposition.py --variables tas pr_minus_evap                   # log2(AMOC)
 python scripts/plot_co2_amoc_decomposition.py --variables tas pr_minus_evap --amoc-power 1    # linear
 ```
 
-**Global means (`tas`, K, ln AMOC):** CO₂ effect +2.28 (2×) and +4.56 (4×); AMOC
+**Global means (`tas`, K, log2 AMOC):** CO₂ effect +2.28 (2×) and +4.56 (4×); AMOC
 effect −0.42 and −0.95; nonlinear +0.06 and +0.27. The fit is validated against
 `statsmodels.OLS` at single cells (coefficients, SEs and p-values agree to ~1e-13).
 A run takes about 7 s per variable, so roughly 6 minutes for all 47.
@@ -840,7 +847,7 @@ python scripts/plot_amoc_timeseries.py     # data/output/regression/amoc_timeser
 python scripts/plot_co2_amoc_differences.py  # data/output/co2_amoc_diff/book_2101-2150.pdf (4xCO2 / AMOC differences, 1 page per variable)
 python scripts/plot_case_grid_book.py      # data/output/case_grid/<var>_2101-2150.pdf (3x3 case maps + zonal pages, one book per variable)
 python scripts/run_eof_regressions.py      # data/output/eof/<var>_pc.{pdf,nc}
-python scripts/plot_co2_amoc_decomposition.py  # data/output/co2_amoc_decomposition/<var>_2101-2150_lnAMOC.pdf
+python scripts/plot_co2_amoc_decomposition.py  # data/output/co2_amoc_decomposition/<var>_2101-2150_log2AMOC.pdf
 python scripts/run_itcz_regressions.py     # data/output/itcz/<band>_coef_table.csv
 python scripts/plot_itcz_regressions.py    # data/output/itcz/<band>_itcz.pdf
 ```

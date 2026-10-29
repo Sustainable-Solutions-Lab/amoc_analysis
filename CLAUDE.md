@@ -108,10 +108,9 @@ rather than hiding them.
   shaded confidence band; report slope ± standard error and the relevant
   statistic (R², p-value) in the legend or annotation.
 - **Significance on maps**: never stipple or hatch. Contour the field itself at
-  its colorbar ticks, only where p ≤ 0.05, so color plus contours means significant
-  and color alone means not significant. Use `output.colorbar_levels(vmin, vmax)`
+  its colorbar ticks: black where p ≤ 0.05, light grey where not. Use `output.colorbar_levels(vmin, vmax)`
   for the levels, pass the same levels as the colorbar's `ticks`, and draw with
-  `output.contour_significant(ax, field, pvalue, levels)` (thin solid black lines;
+  `output.contour_significant(ax, field, pvalue, levels)` (all lines solid;
   dashes mean CO₂ level).
 - **Diverging colormaps**: For difference/anomaly maps or any plot using a
   diverging colormap (e.g. `RdBu_r` where white is the midpoint), always use

@@ -9,10 +9,11 @@ For each variable, one page of 2101-2150 mean differences
 4xCO2_m03Sv holds AMOC near the control's ~20 Sv while 4xCO2 weakens to ~10 Sv.
 Each map has a strip on its right with the zonal mean and 5-95% band over
 longitude (thin green / blue lines over land / ocean), aligned with the map's
-latitudes. Each difference map is contoured at its colorbar ticks where that
+latitudes. Each difference map is contoured at its colorbar ticks, black where that
 difference is significant (Welch t-test of the five 10-year means of each run,
-p <= 0.05); color alone means not significant. The ratio is masked where the CO2
-effect is not significant and contoured where the AMOC effect is. The ratio strip shows ratios of
+p <= 0.05) and light grey where not. The
+ratio is masked where the CO2 effect is not significant; its contours show the AMOC
+effect's significance. The ratio strip shows ratios of
 zonal means, shaded with their 95% confidence interval (delta method on the
 10-year means of the zonal means, ``regression.difference_ratio_conf_int``). 2101-2150 is the last 50 years common to the runs (4xCO2 ends in 2150).
 One single-page PDF per variable, ``data/output/co2_amoc_diff/<var>_2101-2150.pdf``,

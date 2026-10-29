@@ -500,26 +500,29 @@ def variance_inflation_factors(predictors):
 # CO2 x AMOC decomposition (``scripts/plot_co2_amoc_decomposition.py``): one OLS per
 # grid cell over the nine runs' multi-year means (one sample per run),
 #     field = a + b*C + c*A + d*C*A,  C = log2(CO2 multiple),  A = T(AMOC) - T(AMOC(1xCO2)),
-# where T is the Box-Cox transform of power p (``amoc_transform``; p = 0 is ln AMOC,
-# p = 1 linear). Both predictors are zero at the 1xCO2 control (CO2_AMOC_REFERENCE),
-# so ``a`` is the fitted control field, ``b`` the CO2 effect per doubling at the
-# control's AMOC, ``c`` the AMOC effect per unit of A at 1xCO2, and ``d`` the
-# interaction; at any (C, A) the four terms a, b*C, c*A, d*C*A sum exactly to the
-# fitted field. The Box-Cox scaling only rescales c and d: the terms c*A and d*C*A,
-# and so the decomposition maps, depend on p alone.
+# where T is the Box-Cox transform of power p (``amoc_transform``; p = 0 is log2 AMOC,
+# i.e. the Box-Cox limit ln AMOC rescaled to doublings, p = 1 linear). Both
+# predictors are zero at the 1xCO2 control (CO2_AMOC_REFERENCE), so ``a`` is the
+# fitted control field, ``b`` the CO2 effect per doubling at the control's AMOC,
+# ``c`` the AMOC effect per unit of A at 1xCO2, and ``d`` the interaction; at any
+# (C, A) the four terms a, b*C, c*A, d*C*A sum exactly to the fitted field. The
+# Box-Cox scaling only rescales c and d: the terms c*A and d*C*A, and so the
+# decomposition maps, depend on p alone.
 CO2_AMOC_REFERENCE = {"co2": 1, "hosing": 0.0}
-DEFAULT_AMOC_POWER = 0.0  # ln AMOC: best shared power over tas, pr, P-E is ~ -0.5 to 0
+DEFAULT_AMOC_POWER = 0.0  # log2 AMOC: best shared power over tas, pr, P-E is ~ -0.5 to 0
 
 
 def amoc_transform(amoc, power):
-    """Box-Cox transform of AMOC (Sv): (AMOC**power - 1) / power, or its limit
-    ln(AMOC) at power 0."""
-    return np.log(amoc) if power == 0 else (amoc**power - 1) / power
+    """Box-Cox transform of AMOC (Sv): (AMOC**power - 1) / power, or at power 0
+    log2(AMOC) (the Box-Cox limit ln(AMOC) divided by ln 2, so A counts halvings or
+    doublings of AMOC)."""
+    return np.log2(amoc) if power == 0 else (amoc**power - 1) / power
 
 
 def amoc_transform_label(power):
-    """Name of ``amoc_transform`` at ``power`` for titles: ``ln(AMOC)``, ``AMOC``, ``AMOC^p``."""
-    return {0: "ln(AMOC)", 1: "AMOC"}.get(power, f"AMOC^{power:g}")
+    """Name of ``amoc_transform`` at ``power`` for titles: ``log2(AMOC)``, ``AMOC``,
+    ``AMOC^p``."""
+    return {0: "log2(AMOC)", 1: "AMOC"}.get(power, f"AMOC^{power:g}")
 
 
 def co2_amoc_predictors(amoc_grid, amoc_power):
