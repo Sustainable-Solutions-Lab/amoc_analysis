@@ -454,3 +454,90 @@ def variance_inflation_factors(predictors):
     X = np.column_stack([predictors[v].values for v in predictors.data_vars])
     X = (X - X.mean(0)) / X.std(0)
     return dict(zip(predictors.data_vars, np.diag(np.linalg.inv(np.corrcoef(X.T)))))
+
+
+# CO2 x AMOC decomposition (``scripts/plot_co2_amoc_decomposition.py``): one OLS per
+# grid cell over the nine runs' multi-year means (one sample per run),
+#     field = a + b*C + c*A + d*C*A,  C = log2(CO2 multiple),  A = T(AMOC) - T(AMOC(1xCO2)),
+# where T is the Box-Cox transform of power p (``amoc_transform``; p = 0 is ln AMOC,
+# p = 1 linear). Both predictors are zero at the 1xCO2 control (CO2_AMOC_REFERENCE),
+# so ``a`` is the fitted control field, ``b`` the CO2 effect per doubling at the
+# control's AMOC, ``c`` the AMOC effect per unit of A at 1xCO2, and ``d`` the
+# interaction; at any (C, A) the four terms a, b*C, c*A, d*C*A sum exactly to the
+# fitted field. The Box-Cox scaling only rescales c and d: the terms c*A and d*C*A,
+# and so the decomposition maps, depend on p alone.
+CO2_AMOC_REFERENCE = {"co2": 1, "hosing": 0.0}
+DEFAULT_AMOC_POWER = 0.0  # ln AMOC: best shared power over tas, pr, P-E is ~ -0.5 to 0
+
+
+def amoc_transform(amoc, power):
+    """Box-Cox transform of AMOC (Sv): (AMOC**power - 1) / power, or its limit
+    ln(AMOC) at power 0."""
+    return np.log(amoc) if power == 0 else (amoc**power - 1) / power
+
+
+def amoc_transform_label(power):
+    """Name of ``amoc_transform`` at ``power`` for titles: ``ln(AMOC)``, ``AMOC``, ``AMOC^p``."""
+    return {0: "ln(AMOC)", 1: "AMOC"}.get(power, f"AMOC^{power:g}")
+
+
+def co2_amoc_predictors(amoc_grid, amoc_power):
+    """Predictor columns ``log2_co2``, ``amoc_anomaly`` (``amoc_transform`` of AMOC
+    minus the control's) and their product ``log2_co2.amoc_anomaly`` on a ``sample``
+    axis (the stacked ``(co2, hosing)`` cases of ``amoc_grid``, a
+    ``data_loader.case_grid_amoc_mean`` result)."""
+    transformed = amoc_transform(amoc_grid, amoc_power)
+    log2_co2 = np.log2(amoc_grid["co2"]).broadcast_like(amoc_grid)
+    amoc_anomaly = transformed - transformed.sel(**CO2_AMOC_REFERENCE)
+    columns = xr.Dataset({
+        "log2_co2": log2_co2,
+        "amoc_anomaly": amoc_anomaly,
+        "log2_co2.amoc_anomaly": log2_co2 * amoc_anomaly,
+    })
+    return columns.stack(sample=("co2", "hosing")).drop_vars(["sample", "co2", "hosing"])
+
+
+def fit_co2_amoc(grid, amoc_grid, amoc_power):
+    """Per-grid-cell OLS (``fit_grid_ols``) of ``grid`` (a ``(co2, hosing, lat, lon)``
+    ``data_loader.case_grid_time_mean`` result) on
+    ``co2_amoc_predictors(amoc_grid, amoc_power)``, one sample per case. The
+    control's AMOC is kept as ``amoc_reference_Sv`` and the power as ``amoc_power``."""
+    field = grid.stack(sample=("co2", "hosing")).transpose("sample", "lat", "lon")
+    fit = fit_grid_ols(co2_amoc_predictors(amoc_grid, amoc_power), field)
+    return fit.assign_attrs(
+        amoc_reference_Sv=float(amoc_grid.sel(**CO2_AMOC_REFERENCE)),
+        amoc_power=amoc_power, amoc_transform=amoc_transform_label(amoc_power),
+        time_mean=grid.attrs["time_mean"], units=grid.attrs["units"],
+    )
+
+
+def co2_amoc_decomposition(fit, amoc_grid):
+    """Split each no-hosing run's fitted field (``data_loader.CO2_LEVELS``) into the
+    four terms of ``fit_co2_amoc``: ``contribution`` = coef x factor, dims
+    ``(co2, param, lat, lon)``, with factors 1, dC, dA and dC*dA for
+    dC = log2(CO2 multiple) and dA = that run's transformed AMOC minus the
+    control's, at the fit's ``amoc_power`` (``delta_log2_co2``,
+    ``delta_amoc_transformed``; both 0 at 1xCO2). ``delta_amoc`` is the untransformed
+    change (Sv), ``fitted`` the sum of the terms (the reconstructed field), and
+    ``pvalue`` each coefficient's p-value."""
+    co2 = xr.DataArray(dl.CO2_LEVELS, dims="co2", coords={"co2": dl.CO2_LEVELS})
+    delta_log2_co2 = np.log2(co2)
+    delta = lambda grid: (grid.sel(co2=co2, hosing=0.0)
+                          - grid.sel(**CO2_AMOC_REFERENCE)).drop_vars("hosing")
+    delta_amoc_transformed = delta(amoc_transform(amoc_grid, fit.attrs["amoc_power"]))
+    factors = {
+        "intercept": xr.ones_like(delta_amoc_transformed),
+        "log2_co2": delta_log2_co2,
+        "amoc_anomaly": delta_amoc_transformed,
+        "log2_co2.amoc_anomaly": delta_log2_co2 * delta_amoc_transformed,
+    }
+    factor = xr.concat([factors[p] for p in fit["param"].values], dim=fit.indexes["param"])
+    contribution = fit["coef"] * factor
+    return xr.Dataset({
+        "contribution": contribution,
+        "fitted": contribution.sum("param"),
+        "pvalue": fit["pvalue"],
+        "delta_log2_co2": delta_log2_co2,
+        "delta_amoc": delta(amoc_grid),
+        "delta_amoc_transformed": delta_amoc_transformed,
+    }, attrs={"amoc_transform": fit.attrs["amoc_transform"]})

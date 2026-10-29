@@ -314,7 +314,7 @@ handle the FV grid's half-width polar cells at ±90°.
 ## Analysis
 
 > **Status of this section (CESM1.2 data).** Every analysis below (case-grid maps,
-> gridded regressions, EOFs, scenario prediction, ITCZ regressions) has been run on
+> gridded regressions, EOFs, CO₂ × AMOC decomposition, ITCZ regressions) has been run on
 > the nine CESM1.2 runs, and all numbers quoted are CESM1.2 results, with water
 > fluxes in mm day⁻¹.
 
@@ -506,7 +506,7 @@ subpolar North Atlantic is +0.35 K Sv⁻¹), and area-mean R² rises only slight
 
 ### Decadal means
 
-Every regression analysis (gridded, EOF, ITCZ, scenarios) uses **decadal means**,
+Every pooled regression analysis (gridded, EOF, ITCZ) uses **decadal means**,
 to characterize variability slower than interannual. The low-pass is
 **non-overlapping 10-year block means** (`regression.DECADAL_BLOCK`,
 `data_loader.block_average_on_years`). It is applied **per run, per
@@ -605,73 +605,98 @@ wanted deliverables. The capability remains in `eof.reconstruct_fingerprint`
 (verified: with all modes retained it reproduces the direct field regression's
 coefficient *and* p-value to Δcoef ~ 1e-10, Δp ~ 1e-8) should maps be wanted later.
 
-### Scenario prediction: warming × AMOC decline
+### CO₂ × AMOC decomposition
 
-`scripts/predict_scenarios.py` uses the **decadal** set 5 (Tglob + AMOC) and set 10
-(Tglob + AMOC + Tglob·AMOC) coefficient maps to predict field changes for 3 K of
-global warming relative to the 1×CO₂ control, with and without an AMOC decline from
-20 to 6 Sv. It addresses: *where does AMOC decline exacerbate the response to warming,
-and where does it ameliorate it?* Four states form a 2 × 2 factorial:
+`scripts/plot_co2_amoc_decomposition.py` splits the response of the 2× and 4×CO₂
+runs (no hosing) into a CO₂ part, an AMOC part and a nonlinear part, for each
+analysis variable. It fits one OLS per grid cell over the **nine runs' 2101–2150
+means**: the last 50 years with AMOC in every run, one sample per run, so n = 9 and
+df = 5.
 
-| state | Tglob (K) | AMOC (Sv) |
+    field = a + b·C + c·A + d·C·A,   C = log2(CO₂ multiple),   A = T(AMOC) − T(AMOC at 1×CO₂)
+
+AMOC is each run's 2101–2150 mean at 26.5°N (`data_loader.case_grid_amoc_mean`):
+19.85 Sv in the control, 14.76 Sv at 2×CO₂ and 10.13 Sv at 4×CO₂. `T` is a Box–Cox
+transform with power p (`regression.amoc_transform`): (AMOC^p − 1)/p, which becomes
+ln(AMOC) at p = 0. `--amoc-power P` sets p. The **default is p = 0, ln(AMOC)**; p = 1
+is linear in AMOC. Both predictors are measured from the 1×CO₂ control (C is 0 there
+already), so:
+
+- `a` is the fitted control field;
+- `b` is the CO₂ effect per doubling at the control's AMOC;
+- `c` is the AMOC effect per unit of A at 1×CO₂;
+- `d` is the interaction (`regression.fit_co2_amoc`).
+
+The Box–Cox scaling only rescales `c` and `d`. The terms `c·A` and `d·C·A`, and so
+the maps, depend on p alone.
+
+**Why ln(AMOC).** We fit one exponent p shared by all grid cells, choosing it to
+minimize the area-weighted global misfit over the 9 runs. The optimum is broad, and
+at p = 0 most of the gain over linear AMOC is already in hand. The table gives each
+variable's global squared misfit relative to linear AMOC (p = 1):
+
+| p | −1 | −0.5 | 0 (ln) | 0.5 | 1 (linear) | 2 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `tas` | 0.45 | **0.35** | 0.37 | 0.58 | 1.00 | 2.36 |
+| `pr_minus_evap` | **0.79** | 0.80 | 0.83 | 0.90 | 1.00 | 1.26 |
+| `pr` | **0.76** | 0.77 | 0.81 | 0.89 | 1.00 | 1.29 |
+
+So the response to a given AMOC decline (in Sv) grows as AMOC weakens. Equal
+fractional changes give equal responses under ln(AMOC). The regions disagree,
+though. The subpolar North Atlantic alone prefers p ≈ +0.5 for `tas` and p ≈ +1.5–2
+for `pr` and P − E. That fits sea-ice-edge features that move in space rather than
+scale with AMOC, and the misfit stays largest there for every p. The shape is set
+by few distinct AMOC values: in 2101–2150 all three +0.3 Sv runs sit near 5.8 Sv.
+The planned ±0.1 and ±0.2 Sv runs should pin it down.
+
+The **decomposition page** is a 5 × 2 map grid (`output.plot_co2_amoc_decomposition`).
+The columns are 2×CO₂ (ΔC = 1, ΔAMOC = −5.09 Sv, Δln AMOC = −0.296) and 4×CO₂
+(ΔC = 2, ΔAMOC = −9.71 Sv, Δln AMOC = −0.672). The rows are:
+
+| Row | Field | Meaning |
 | --- | --- | --- |
-| reference | T0 = 286.91 (1×CO₂ control, mean over 2051–2150) | 20 |
-| weak | T0 | 6 |
-| warm | T0 + 3 | 20 |
-| warm-weak | T0 + 3 | 6 |
+| 1 | `a` | fitted 1×CO₂ field (same in both columns) |
+| 2 | `b·ΔC` | CO₂ effect with no change in AMOC |
+| 3 | `c·ΔA` | effect of the run's AMOC change, at 1×CO₂ |
+| 4 | `d·ΔC·ΔA` | nonlinear effect of the two together |
+| 5 | rows 1 + 2 + 3 + 4 | reconstructed (fitted) n×CO₂ field |
 
-Each set's map page is a **3 × 3 grid** of maps. The corners are the four
-states' changes from the reference; each edge is the difference of its two
-neighbouring corners:
+Rows 1 and 5 share one absolute `viridis` scale. Rows 2–4 share one symmetric
+diverging scale (`RdBu` for water fluxes, else `RdBu_r`) and are stippled where the
+coefficient's p > 0.05 (`regression.co2_amoc_decomposition`).
 
-| | 20 Sv | AMOC 20 → 6 Sv effect | 6 Sv |
-| --- | --- | --- | --- |
-| **+0 K** | reference (≡ 0) | weak − reference | weak − reference |
-| **warming effect** | warm − reference | *interaction* (set 10) | warm-weak − weak |
-| **+3 K** | warm − reference | warm-weak − warm | warm-weak − reference |
+The **check page** (`output.plot_co2_amoc_reconstruction_check`) is a 3 × 3 grid
+comparing the no-hosing runs with the regression. Its rows are 1×, 2× and 4×CO₂,
+and its columns are the simulated field, the reconstructed field and simulated minus
+reconstructed. With 4 parameters fit to 9 points the fit does not reproduce each run
+exactly. For `tas` with ln(AMOC), simulated minus fitted global means are +0.12 K
+(1×), −0.07 K (2×) and +0.16 K (4×); with linear AMOC they are +0.29, +0.13 and
++0.26 K. The local misfit, up to about 1.5 K with ln(AMOC) (3 K linear), is largest
+in the subpolar North Atlantic and the Arctic.
 
-The centre is the **interaction**: the AMOC effect at +3 K minus that at +0 K
-(equivalently, the warming effect at 6 Sv minus that at 20 Sv). It is identically
-zero for the additive set 5, so set 5 leaves it blank. For `tas` in set 10 it
-weakens the AMOC-decline cooling of the subpolar North Atlantic by about 0.9 K
-(−0.022 K K⁻¹ Sv⁻¹ × 3 K × −14 Sv) out of about 5 K.
+Every panel title gives its area-weighted global mean. Each map page is followed by
+its zonal-statistics page, on which absolute and change panels have separate y
+ranges, so a book has 4 pages.
 
-Global-mean tas is fixed along each row, so the AMOC effects are pure spatial
-redistributions of tas; the global means of prc and pr can still shift. All four
-states lie inside the sampled predictor space (between the ~20 Sv runs and the
-+0.3 Sv runs at ~5.5 Sv), so the predictions are interpolations. The predicted change
-between two states is `coef · (predictor(X) − predictor(R))`; the intercept cancels,
-and set 10 evaluates its centered columns and interaction with the fit's centering
-means.
+Outputs, in `data/output/co2_amoc_decomposition/`. `<T>` names the transform:
+`lnAMOC` (default), `AMOC` (linear) or `AMOCpow<p>`, so runs with different powers
+sit side by side.
 
-Outputs: `data/output/scenarios/<predictand>_scenarios.pdf`, two pages per set
-(5, then 10): the map grid, then its zonal-statistics page (see
-[Zonal-statistics pages](#zonal-statistics-pages)). All panels for a predictand,
-**in both sets**, share one symmetric color scale (99th percentile of |change|) and,
-on the zonal pages, one y range, so set 5 and set 10 compare directly. Each panel
-title gives its area-weighted global mean.
+- `<var>_2101-2150_<T>.pdf`: the decomposition and check pages, each followed by its
+  zonal-statistics page.
+- `<var>_<T>_fit.nc`: the per-cell fit (`coef`, `se`, `tstat`, `pvalue`, `r2`), with
+  `nobs`, `df`, the control's AMOC (`amoc_reference_Sv`), `amoc_power` and
+  `amoc_transform` as attributes.
 
-**Results (set 5; set 10 differs by < 0.003 mm day⁻¹ in the global means).**
-Regional means use the boxes of the regression results above:
+```bash
+python scripts/plot_co2_amoc_decomposition.py --variables tas pr_minus_evap                   # ln(AMOC)
+python scripts/plot_co2_amoc_decomposition.py --variables tas pr_minus_evap --amoc-power 1    # linear
+```
 
-| Region | tas: warming only (K) | tas: AMOC effect (K) | pr: warming only (mm day⁻¹) | pr: AMOC effect (mm day⁻¹) |
-| --- | --- | --- | --- | --- |
-| global | +3.00 | 0.00 (exact) | +0.121 | −0.015 |
-| subpolar N Atlantic | +4.09 | **−5.09** | +0.032 | −0.250 |
-| Sahel | +2.82 | +0.66 | +0.274 | **−0.372** |
-| 0–10°N | +2.14 | +0.65 | +0.227 | −0.085 |
-| 0–10°S | +2.14 | +0.69 | +0.048 | +0.285 |
-
-- **Temperature.** The AMOC decline more than cancels the local warming in the
-  subpolar North Atlantic. The box mean goes from +4.1 K to −1.0 K, and the
-  strongest cell cools by 12.6 K relative to the warming-only case. Because the
-  global mean is held at +3 K, most of the rest of the world warms somewhat more,
-  including the tropics (about +0.7 K).
-- **Precipitation.** The decline shifts tropical rain south. It reverses the
-  Sahel's warming-driven wetting (+0.27 → −0.10 mm day⁻¹), wets 0–10°S, and dries
-  the subpolar North Atlantic. Globally it takes back 12 % of the warming-driven
-  increase in total precipitation (−0.015 of +0.121 mm day⁻¹) and 23 % of the
-  increase in convective precipitation (−0.022 of +0.098 mm day⁻¹).
+**Global means (`tas`, K, ln AMOC):** CO₂ effect +2.28 (2×) and +4.56 (4×); AMOC
+effect −0.42 and −0.95; nonlinear +0.06 and +0.27. The fit is validated against
+`statsmodels.OLS` at single cells (coefficients, SEs and p-values agree to ~1e-13).
+A run takes about 7 s per variable, so roughly 6 minutes for all 47.
 
 ### ITCZ-position regressions (scalar response)
 
@@ -732,8 +757,8 @@ band30:
 
 ### Zonal-statistics pages
 
-Every map page in the case-grid, regression, EOF, and scenario books is followed
-by a **zonal-statistics page** with the same panel layout. For each panel's
+Every map page in the case-grid, regression, EOF, and CO₂ × AMOC decomposition
+books is followed by a **zonal-statistics page** with the same panel layout. For each panel's
 (lat, lon) field, it plots statistics over longitude at each latitude
 (`data_loader.zonal_statistics`; no weighting is needed, since all cells at one
 latitude have equal area; NaN cells are skipped):
@@ -764,21 +789,22 @@ python scripts/plot_scalar_timeseries.py   # data/output/regression/predictor_ti
 python scripts/plot_tglob_vs_amoc.py       # data/output/regression/tglob_vs_amoc.pdf (AMOC vs Tglob, 9 cases)
 python scripts/plot_case_grid_book.py      # data/output/case_grid/<var>_2101-2150.pdf (3x3 case maps + zonal pages, one book per variable)
 python scripts/run_eof_regressions.py      # data/output/eof/<var>_pc.{pdf,nc}
-python scripts/predict_scenarios.py        # data/output/scenarios/<var>_scenarios.pdf
+python scripts/plot_co2_amoc_decomposition.py  # data/output/co2_amoc_decomposition/<var>_2101-2150_lnAMOC.pdf
 python scripts/run_itcz_regressions.py     # data/output/itcz/<band>_coef_table.csv
 python scripts/plot_itcz_regressions.py    # data/output/itcz/<band>_itcz.pdf
 ```
 
 The four set-fitting scripts (`run_regressions.py`, `run_eof_regressions.py`,
 `run_itcz_regressions.py`, `plot_itcz_regressions.py`) default to **only sets 5 & 10**
-on decadal means; add `--all-sets` to produce all ten sets. `predict_scenarios.py`
-uses sets 5 & 10, so it needs only the default run.
+on decadal means; add `--all-sets` to produce all ten sets.
+`plot_co2_amoc_decomposition.py` fits its own model from the input files, so it
+does not need `run_regressions.py` first.
 
 **Variable sets (`--variables`).** Every script that makes per-variable output --
 `run_regressions.py`, `plot_case_grid_book.py`, `run_eof_regressions.py`,
-`predict_scenarios.py` -- takes `--variables` with one or
+`plot_co2_amoc_decomposition.py` -- takes `--variables` with one or
 more named sets (`data_loader.VARIABLE_SETS`) and/or variable names, default `all`.
-`run_eof_regressions.py` and `predict_scenarios.py` read the matching `run_regressions.py` output, so run that with the same set first.
+`run_eof_regressions.py` reads the matching `run_regressions.py` output, so run that with the same set first.
 The ITCZ scripts work on the scalar precipitation-centroid latitude, not per-variable
 fields, so they have no `--variables`.
 
@@ -814,12 +840,13 @@ regression analysis (`scripts/run_regressions.py`, sets 1–10 for all 47 analys
 variables), predictor scatter
 and time series (`scripts/plot_predictor_scatter.py`,
 `scripts/plot_scalar_timeseries.py`), the additive EOF / principal-component path
-(`scripts/run_eof_regressions.py`, built on `src/eof.py`), the decadal
-scenario-prediction maps (`scripts/predict_scenarios.py`), and the ITCZ-centroid
+(`scripts/run_eof_regressions.py`, built on `src/eof.py`), the CO₂ × AMOC
+decomposition maps (`scripts/plot_co2_amoc_decomposition.py`), the ITCZ-centroid
 scalar regressions (`scripts/run_itcz_regressions.py`,
 `scripts/plot_itcz_regressions.py`), and the case-grid map books
 (`scripts/plot_case_grid_book.py`), all built on `src/data_loader.py`,
 `src/regression.py`, and `src/output.py`. Every map page in the case-grid,
-regression, EOF, and scenario books is followed by a zonal-statistics page. The regression, EOF, and ITCZ analyses all
+regression, EOF, and CO₂ × AMOC decomposition books is followed by a
+zonal-statistics page. The regression, EOF, and ITCZ analyses all
 use **decadal means** (10-year block means), and only sets 5 & 10 are fit unless
 `--all-sets` is given.

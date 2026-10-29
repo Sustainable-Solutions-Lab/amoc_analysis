@@ -257,6 +257,25 @@ def _save_figure(fig, out_path=None, pdf=None, dpi=300):
     plt.close(fig)
 
 
+def draw_stippling(ax, pvalue):
+    """Stipple the cells of map ``ax`` where the (lat, lon) ``pvalue`` exceeds
+    ``SIGNIFICANCE_P`` (not significant); NaN p-values are left unstippled.
+
+    As in ``draw_field``, the -180 column is repeated at +180 so the hatching has
+    no gap at the map edge."""
+    pvalue = centered_lon(pvalue)
+    not_significant = (pvalue > SIGNIFICANCE_P).values.astype(float)
+    ax.contourf(
+        np.append(pvalue["lon"].values, 180.0),
+        pvalue["lat"],
+        np.concatenate([not_significant, not_significant[:, :1]], axis=1),
+        levels=[0.5, 1.5],
+        colors="none",
+        hatches=["...."],
+        transform=DATA_CRS,
+    )
+
+
 def plot_coefficient_map(coef, pvalue, title, units, ax, cmap="RdBu_r", bound=None,
                          rasterized=False):
     """Draw one coefficient map on a Cartopy ``ax``: filled field + p>0.05 stippling.
@@ -268,20 +287,9 @@ def plot_coefficient_map(coef, pvalue, title, units, ax, cmap="RdBu_r", bound=No
     ``rasterized`` the filled field (the heavy artist) is embedded as raster while
     axes/text stay vector -- keeps many-panel PDFs small. Returns the mappable.
     """
-    coef, pvalue = centered_lon(coef), centered_lon(pvalue)
-    lon, lat = coef["lon"], coef["lat"]
     b = bound if bound is not None else symmetric_bound(coef.values)
     mesh = draw_field(ax, coef, cmap=cmap, vmin=-b, vmax=b, rasterized=rasterized)
-    # Stipple where NOT significant (p > 0.05).
-    ax.contourf(
-        lon,
-        lat,
-        (pvalue > SIGNIFICANCE_P).astype(float),
-        levels=[0.5, 1.5],
-        colors="none",
-        hatches=["...."],
-        transform=DATA_CRS,
-    )
+    draw_stippling(ax, pvalue)
     draw_coastlines(ax)
     ax.set_global()
     gl = ax.gridlines(draw_labels=True, linewidth=0.3, color="gray", alpha=0.4)
@@ -888,40 +896,113 @@ def plot_case_grid_page(field, title, cmap, vmin, vmax, pdf, rasterized):
     _save_figure(fig, pdf=pdf, dpi=CASE_GRID_RASTER_DPI)
 
 
-def plot_map_grid(panels, shape, title, units, cmap, bound, zonal_ylim, pdf):
-    """One page of ``pdf``: maps on a ``shape`` (rows, cols) grid sharing one color
-    scale, followed by a page of their zonal statistics in the same layout on the
-    y range ``zonal_ylim``.
+# CO2 x AMOC decomposition book (``scripts/plot_co2_amoc_decomposition.py``). The
+# decomposition page has one column per decomposed CO2 multiple (no hosing) and
+# five rows: the fitted 1xCO2 field (a), the three CO2_AMOC_TERM_ROWS, and their
+# sum, the reconstructed nxCO2 field. Titles are formatted with the column's ``co2``.
+CO2_AMOC_COLUMNS = [2, 4]
+CO2_AMOC_TERM_ROWS = [  # (``regression.fit_co2_amoc`` parameter, row title)
+    ("log2_co2", "CO2 effect at 1xCO2 AMOC: b·Δlog2(CO2)"),
+    ("amoc_anomaly", "AMOC effect at 1xCO2: c·ΔA"),
+    ("log2_co2.amoc_anomaly", "nonlinear: d·Δlog2(CO2)·ΔA"),
+]
+CO2_AMOC_BASELINE_TITLE = "fitted 1xCO2 field: a"
+CO2_AMOC_RECONSTRUCTED_TITLE = "reconstructed {co2}xCO2 field: sum of rows 1-4"
 
-    ``panels`` maps ``(row, col)`` to ``(panel title, (lat, lon) DataArray)``;
-    grid cells not in ``panels`` are left blank. The symmetric scale is
-    ±``bound`` (white = 0). Each panel title ends with its area-weighted global
-    mean. Map fields are rasterized at ``CASE_GRID_RASTER_DPI``; text and
-    coastlines stay vector.
+# A panel of ``plot_field_and_change_grid``: ``change`` panels (differences) share a
+# symmetric diverging scale, the others (absolute fields) a ``viridis`` scale;
+# ``pvalue`` (or None) stipples p > SIGNIFICANCE_P.
+MapPanel = namedtuple("MapPanel", "title field change pvalue")
+
+
+def plot_field_and_change_grid(panels, shape, name, units, cmap, title, pdf):
+    """Two pages of ``pdf``: a ``shape`` (rows, cols) map grid mixing absolute
+    fields and changes of one variable, then its zonal statistics in the same layout.
+
+    ``panels`` maps ``(row, col)`` to a ``MapPanel``. The absolute panels share one
+    ``viridis`` scale (1st-99th percentile over them) and one zonal y range; the
+    change panels share one symmetric ``cmap`` scale (white = 0) and their own y
+    range. One horizontal colorbar for each kind sits under the grid. Each panel
+    title gives its area-weighted global mean. Map fields are rasterized at
+    ``CASE_GRID_RASTER_DPI``.
     """
-    fig, axes = plt.subplots(*shape, figsize=(5.0 * shape[1], 3.2 * shape[0]),
-                             subplot_kw={"projection": PROJECTION}, layout="constrained")
-    for ax in axes.flat:
-        ax.set_visible(False)
-    for (i, j), (panel_title, field) in panels.items():
+    labels = {False: label_with_units(name, units), True: label_with_units(f"Δ{name}", units)}
+    fields = {change: [p.field for p in panels.values() if p.change == change]
+              for change in (False, True)}
+    low, high = np.nanpercentile(np.concatenate([f.values.ravel() for f in fields[False]]), [1, 99])
+    bound = symmetric_bound(np.concatenate([f.values.ravel() for f in fields[True]]))
+    style = {False: {"cmap": "viridis", "vmin": low, "vmax": high},
+             True: {"cmap": cmap, "vmin": -bound, "vmax": bound}}
+    mean_format = {False: "{:.4g}", True: "{:+.3g}"}
+
+    fig, axes = plt.subplots(*shape, figsize=(5.2 * shape[1], 2.9 * shape[0] + 1.6),
+                             squeeze=False, subplot_kw={"projection": PROJECTION},
+                             layout="constrained")
+    meshes = {}
+    for (i, j), panel in panels.items():
         ax = axes[i, j]
-        ax.set_visible(True)
-        mesh = draw_field(ax, field, cmap=cmap, vmin=-bound, vmax=bound, rasterized=True)
+        meshes[panel.change] = draw_field(ax, panel.field, rasterized=True, **style[panel.change])
+        if panel.pvalue is not None:
+            draw_stippling(ax, panel.pvalue)
         draw_coastlines(ax)
         ax.set_global()
-        ax.set_title(f"{panel_title}\nglobal mean = {float(dl.global_mean(field)):+.3f} {units}",
+        mean_text = mean_format[panel.change].format(float(dl.global_mean(panel.field)))
+        ax.set_title(f"{panel.title}\nglobal mean = {value_with_units(mean_text, units)}",
                      fontsize=9)
-    cbar = fig.colorbar(mesh, ax=axes, orientation="horizontal", shrink=0.5,
-                        pad=0.02, aspect=40)
-    cbar.set_label(units)
-    fig.suptitle(title, fontsize=12)
+    for change, mesh in meshes.items():
+        fig.colorbar(mesh, ax=axes, orientation="horizontal", shrink=0.5, pad=0.01,
+                     aspect=40).set_label(labels[change])
+    fig.suptitle(title, fontsize=11)
     _save_figure(fig, pdf=pdf, dpi=CASE_GRID_RASTER_DPI)
 
+    ylims = {change: zonal_range(fields[change]) for change in (False, True)}
     plot_zonal_grid(
-        {cell: ZonalPanel(panel_title, field, ZONAL_NEUTRAL_COLOR, zonal_ylim, units)
-         for cell, (panel_title, field) in panels.items()},
-        shape, f"{title}\nzonal statistics over longitude", pdf,
+        {cell: ZonalPanel(panel.title, panel.field, ZONAL_NEUTRAL_COLOR,
+                          ylims[panel.change], labels[panel.change])
+         for cell, panel in panels.items()},
+        shape, f"{title}\nzonal statistics over longitude (all cells, significant or not)", pdf,
     )
+
+
+def plot_co2_amoc_decomposition(decomposition, name, units, cmap, title, pdf):
+    """Map page (plus zonal page) of a ``regression.co2_amoc_decomposition`` result:
+    one column per ``CO2_AMOC_COLUMNS`` level, headed by its Δlog2(CO2), ΔAMOC and ΔA,
+    and five rows: the fitted 1xCO2 field, the ``CO2_AMOC_TERM_ROWS`` terms
+    (stippled where their coefficient's p > ``SIGNIFICANCE_P``) and the
+    reconstructed field (their sum). Rows 1 and 5 share one absolute scale, rows
+    2-4 one diverging scale (``plot_field_and_change_grid``)."""
+    panels = {}
+    for j, co2 in enumerate(CO2_AMOC_COLUMNS):
+        column = decomposition.sel(co2=co2)
+        header = (f"{co2}xCO2: Δlog2(CO2) = {float(column['delta_log2_co2']):g}, "
+                  f"ΔAMOC = {float(column['delta_amoc']):+.2f} Sv,\n"
+                  f"ΔA = Δ{decomposition.attrs['amoc_transform']} = "
+                  f"{float(column['delta_amoc_transformed']):+.3g}")
+        panels[0, j] = MapPanel(f"{header}\n{CO2_AMOC_BASELINE_TITLE}",
+                                column["contribution"].sel(param="intercept"), False, None)
+        for i, (param, row_title) in enumerate(CO2_AMOC_TERM_ROWS, start=1):
+            panels[i, j] = MapPanel(row_title, column["contribution"].sel(param=param), True,
+                                    column["pvalue"].sel(param=param))
+        panels[len(CO2_AMOC_TERM_ROWS) + 1, j] = MapPanel(
+            CO2_AMOC_RECONSTRUCTED_TITLE.format(co2=co2), column["fitted"], False, None)
+    plot_field_and_change_grid(panels, (len(CO2_AMOC_TERM_ROWS) + 2, len(CO2_AMOC_COLUMNS)),
+                               name, units, cmap, title, pdf)
+
+
+def plot_co2_amoc_reconstruction_check(actual, fitted, name, units, cmap, title, pdf):
+    """Map page (plus zonal page) comparing the no-hosing runs with the regression:
+    one row per CO2 level of ``actual`` and ``fitted`` (``(co2, lat, lon)``), and
+    columns simulated, reconstructed and simulated minus reconstructed. The first
+    two columns share one absolute scale, the differences one diverging scale
+    (``plot_field_and_change_grid``)."""
+    panels = {}
+    for i, co2 in enumerate(actual["co2"].values):
+        simulated, reconstructed = actual.sel(co2=co2), fitted.sel(co2=co2)
+        panels[i, 0] = MapPanel(f"{co2}xCO2 simulated", simulated, False, None)
+        panels[i, 1] = MapPanel(f"{co2}xCO2 reconstructed (regression)", reconstructed, False, None)
+        panels[i, 2] = MapPanel(f"{co2}xCO2 simulated − reconstructed",
+                                simulated - reconstructed, True, None)
+    plot_field_and_change_grid(panels, (actual.sizes["co2"], 3), name, units, cmap, title, pdf)
 
 
 def plot_case_grid_zonal_page(field, title, pdf):

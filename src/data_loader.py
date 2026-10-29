@@ -458,3 +458,25 @@ def amoc_strength_on_years(experiment, years):
         series.values, coords={"year": np.asarray(years)}, dims="year",
         name="amoc_strength",
     )
+
+
+def case_grid_amoc_mean(first_year, last_year):
+    """Mean AMOC strength (Sv) over calendar years ``first_year``..``last_year``
+    (inclusive) for every case, as a ``(co2, hosing)`` DataArray laid out like
+    ``CASE_GRID``; the scalar counterpart of ``case_grid_time_mean``.
+
+    Every case's AMOC series must cover the full year range (a NaN would
+    propagate into the mean otherwise).
+    """
+    years = np.arange(first_year, last_year + 1)
+    rows = [
+        xr.concat(
+            [amoc_strength_on_years(case, years).mean("year", skipna=False) for case in row],
+            dim=pd.Index(HOSING_LEVELS, name="hosing"),
+        )
+        for row in CASE_GRID
+    ]
+    grid = xr.concat(rows, dim=pd.Index(CO2_LEVELS, name="co2"))
+    grid.attrs = {"units": "Sv", "long_name": "AMOC strength at 26.5N",
+                  "time_mean": f"{first_year}-{last_year}"}
+    return grid.rename("amoc_strength")
